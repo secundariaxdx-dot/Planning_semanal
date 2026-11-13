@@ -377,7 +377,7 @@ function goToWeek(key) {
 }
 $('#prevWeek').addEventListener('click', () => goToWeek(keyOf(addDays(dateOfKey(currentKey), -7))));
 $('#nextWeek').addEventListener('click', () => goToWeek(keyOf(addDays(dateOfKey(currentKey), 7))));
-$('#todayBtn').addEventListener('click', () => { goToWeek(thisWeekKey()); scrollToToday(); });
+$('#todayBtn').addEventListener('click', () => { goToWeek(thisWeekKey()); scrollToGoals(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea') || document.querySelector('dialog[open]')) return;
@@ -385,11 +385,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') $('#nextWeek').click();
 });
 
-function scrollToToday() {
-  if (!matchMedia('(max-width: 559px)').matches) return;
-  const day = (new Date().getDay() + 6) % 7;
-  if (day === 0) return;
-  document.getElementById(`day-${day}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+/** Vuelve arriba del todo, a los objetivos de la semana. */
+function scrollToGoals(smooth = true) {
+  window.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
 }
 
 // ---------------------------------------------------------------- sincronización
@@ -493,8 +491,10 @@ setInterval(() => {
 
 // ---------------------------------------------------------------- arranque
 
+// Al abrir, empezar siempre por los objetivos (sin recuperar el scroll anterior).
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 render();
-scrollToToday();
+scrollToGoals(false);
 sync.start();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
