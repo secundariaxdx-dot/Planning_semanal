@@ -13,6 +13,9 @@
   --ok: #2e9d5b;
   --warn: #d48a12;
   --today: #2f6fdf;
+  --started: #e8790c;
+  --started-soft: #fdebd6;
+  --started-border: #f6c48f;
   --shadow: 0 1px 2px rgba(20, 20, 30, .05), 0 2px 8px rgba(20, 20, 30, .04);
   --radius: 14px;
   color-scheme: light;
@@ -34,6 +37,9 @@
     --ok: #4cc27c;
     --warn: #e6a640;
     --today: #6a9cf5;
+  --started: #f39a3d;
+  --started-soft: #3a2713;
+  --started-border: #6b4419;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3);
     color-scheme: dark;
   }
@@ -53,6 +59,9 @@
   --ok: #4cc27c;
   --warn: #e6a640;
   --today: #6a9cf5;
+  --started: #f39a3d;
+  --started-soft: #3a2713;
+  --started-border: #6b4419;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3);
   color-scheme: dark;
 }
@@ -371,3 +380,25 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-
   .sync-btn { margin-left: auto; }
   .topbar-inner { row-gap: 8px; }
 }
+
+/* Objetivos empezados (circulito naranja) */
+.started-btn {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0 auto;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--started);
+  background: transparent;
+}
+.started-btn:hover { background: var(--started-soft); }
+.started-btn[aria-pressed="true"] { background: var(--started); }
+.item.done .started-btn { opacity: .35; }
+.item.started {
+  background: var(--started-soft);
+  box-shadow: inset 0 0 0 1px var(--started-border);
+}
+.item.started:hover { background: var(--started-soft); }
+#goalList { gap: 4px; }
+#goalList .item { padding: 6px 8px; }

@@ -205,7 +205,10 @@ function render() {
 }
 
 function itemRow(kind, item) {
-  const li = el('li', { class: `item${item.done ? ' done' : ''}`, dataset: { id: item.id } },
+  const started = kind === 'goals' && item.started && !item.done;
+  const li = el('li', {
+    class: `item${item.done ? ' done' : ''}${started ? ' started' : ''}`, dataset: { id: item.id },
+  },
     el('input', {
       type: 'checkbox', class: 'check', checked: item.done,
       'aria-label': item.done ? 'Marcar como pendiente' : 'Marcar como hecha',
@@ -214,7 +217,15 @@ function itemRow(kind, item) {
     el('button', {
       type: 'button', class: 'item-text', title: 'Editar',
       onclick: () => openItemDialog(kind, item.id),
-    }, item.text));
+    }, item.text),
+    // Objetivos: circulito naranja = «empezado pero no acabado».
+    kind === 'goals' ? el('button', {
+      type: 'button', class: 'started-btn',
+      'aria-pressed': item.started ? 'true' : 'false',
+      'aria-label': item.started ? 'Quitar «empezado»' : 'Marcar como empezado',
+      title: item.started ? 'Empezado (pulsa para quitar)' : 'Marcar como empezado',
+      onclick: () => { updateItem(kind, item.id, { started: !item.started }); commit(); },
+    }) : null);
 
   if (kind === 'tasks') {
     li.draggable = true;

@@ -37,6 +37,7 @@ export function normalizeState(raw) {
           updatedAt: Number.isFinite(it.updatedAt) ? it.updatedAt : 0,
         };
         if (kind === 'tasks') item.day = Math.min(6, Math.max(0, Math.trunc(Number(it.day) || 0)));
+        if (kind === 'goals' && it.started) item.started = true;
         if (it.deleted) item.deleted = true;
         week[kind][id] = item;
       }
