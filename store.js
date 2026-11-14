@@ -2,53 +2,87 @@
 //
 // Estructura:
 // {
-//   version: 2,
+//   version: 3,
 //   weeks: {
 //     "2026-11-09": {                       // clave = lunes de la semana
-//       tasks: { [id]: { id, text, done, day (0-6), order, updatedAt, deleted? } },
-//       goals: { [id]: { id, text, done, order, updatedAt, deleted? } },
+//       tasks: { [id]: { id, text, done, day (0-6), order, updatedAt, pending?, deleted? } },
+//       goals: { [id]: { id, text, done, order, updatedAt, started?, pending?, deleted? } },
 //       notes: { text, updatedAt }
 //     }
+//   },
+//   rules: {                                // tareas que se repiten cada semana
+//     [id]: { id, text, days: [0-6…], from, until, order, updatedAt, deleted? }
 //   }
 // }
 //
 // Cada elemento lleva su propia marca de tiempo; al fusionar dos copias
 // gana la versión más reciente de cada elemento. Los borrados se guardan
 // como "deleted: true" para que no reaparezcan al sincronizar.
+//
+// Tareas repetidas: una regla genera una tarea "virtual" por cada día elegido
+// en todas las semanas entre `from` (incluida) y `until` (excluida). La tarea
+// solo se guarda de verdad en la semana (con id "r:<regla>:<día>") cuando el
+// usuario la toca: marcarla, moverla o quitarla esa semana.
 
-export const emptyState = () => ({ version: 2, weeks: {} });
+const WEEK_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const PRUNE_AFTER_MS = 60 * 24 * 60 * 60 * 1000; // 60 días
+
+export const emptyState = () => ({ version: 3, weeks: {}, rules: {} });
 export const emptyWeek = () => ({ tasks: {}, goals: {}, notes: { text: '', updatedAt: 0 } });
+
+const num = (v, fallback = 0) => (Number.isFinite(v) ? v : fallback);
 
 export function normalizeState(raw) {
   const state = emptyState();
-  if (!raw || typeof raw !== 'object' || !raw.weeks || typeof raw.weeks !== 'object') return state;
-  for (const [key, w] of Object.entries(raw.weeks)) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !w || typeof w !== 'object') continue;
-    const week = emptyWeek();
-    for (const kind of ['tasks', 'goals']) {
-      const src = w[kind] && typeof w[kind] === 'object' ? w[kind] : {};
-      for (const [id, it] of Object.entries(src)) {
-        if (!it || typeof it !== 'object') continue;
-        const item = {
-          id,
-          text: String(it.text ?? ''),
-          done: !!it.done,
-          order: Number.isFinite(it.order) ? it.order : 0,
-          updatedAt: Number.isFinite(it.updatedAt) ? it.updatedAt : 0,
-        };
-        if (kind === 'tasks') item.day = Math.min(6, Math.max(0, Math.trunc(Number(it.day) || 0)));
-        if (kind === 'goals' && it.started) item.started = true;
-        if (it.deleted) item.deleted = true;
-        week[kind][id] = item;
+  if (!raw || typeof raw !== 'object') return state;
+
+  if (raw.weeks && typeof raw.weeks === 'object') {
+    for (const [key, w] of Object.entries(raw.weeks)) {
+      if (!WEEK_KEY.test(key) || !w || typeof w !== 'object') continue;
+      const week = emptyWeek();
+      for (const kind of ['tasks', 'goals']) {
+        const src = w[kind] && typeof w[kind] === 'object' ? w[kind] : {};
+        for (const [id, it] of Object.entries(src)) {
+          if (!it || typeof it !== 'object') continue;
+          const item = {
+            id,
+            text: String(it.text ?? ''),
+            done: !!it.done,
+            order: num(it.order),
+            updatedAt: num(it.updatedAt),
+          };
+          if (kind === 'tasks') item.day = Math.min(6, Math.max(0, Math.trunc(Number(it.day) || 0)));
+          if (kind === 'goals' && it.started) item.started = true;
+          if (it.pending) item.pending = true;
+          if (it.deleted) item.deleted = true;
+          week[kind][id] = item;
+        }
       }
+      if (w.notes && typeof w.notes === 'object') {
+        week.notes = { text: String(w.notes.text ?? ''), updatedAt: num(w.notes.updatedAt) };
+      }
+      state.weeks[key] = week;
     }
-    if (w.notes && typeof w.notes === 'object') {
-      week.notes = {
-        text: String(w.notes.text ?? ''),
-        updatedAt: Number.isFinite(w.notes.updatedAt) ? w.notes.updatedAt : 0,
+  }
+
+  if (raw.rules && typeof raw.rules === 'object') {
+    for (const [id, r] of Object.entries(raw.rules)) {
+      if (!r || typeof r !== 'object' || !WEEK_KEY.test(r.from)) continue;
+      const days = [...new Set((Array.isArray(r.days) ? r.days : []).map(Number))]
+        .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        .sort((a, b) => a - b);
+      const rule = {
+        id,
+        text: String(r.text ?? ''),
+        days,
+        from: r.from,
+        until: WEEK_KEY.test(r.until) ? r.until : null,
+        order: num(r.order),
+        updatedAt: num(r.updatedAt),
       };
+      if (r.deleted) rule.deleted = true;
+      state.rules[id] = rule;
     }
-    state.weeks[key] = week;
   }
   return state;
 }
@@ -61,42 +95,113 @@ export function normalizeState(raw) {
  */
 export function merge(local, remote) {
   const merged = emptyState();
-  let localChanged = false;
-  let remoteChanged = false;
-  const keys = new Set([...Object.keys(local.weeks), ...Object.keys(remote.weeks)]);
+  const flags = { localChanged: false, remoteChanged: false };
 
+  const mergeMap = (a, b, out) => {
+    const ids = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const id of ids) {
+      const x = a[id];
+      const y = b[id];
+      if (x && (!y || x.updatedAt >= y.updatedAt)) {
+        out[id] = x;
+        if (!y || x.updatedAt > y.updatedAt) flags.remoteChanged = true;
+      } else {
+        out[id] = y;
+        flags.localChanged = true;
+      }
+    }
+  };
+
+  const keys = new Set([...Object.keys(local.weeks), ...Object.keys(remote.weeks)]);
   for (const key of keys) {
     const a = local.weeks[key] || emptyWeek();
     const b = remote.weeks[key] || emptyWeek();
     const out = emptyWeek();
-
-    for (const kind of ['tasks', 'goals']) {
-      const ids = new Set([...Object.keys(a[kind]), ...Object.keys(b[kind])]);
-      for (const id of ids) {
-        const x = a[kind][id];
-        const y = b[kind][id];
-        if (x && (!y || x.updatedAt >= y.updatedAt)) {
-          out[kind][id] = x;
-          if (!y || x.updatedAt > y.updatedAt) remoteChanged = true;
-        } else {
-          out[kind][id] = y;
-          localChanged = true;
-        }
-      }
-    }
-
+    mergeMap(a.tasks, b.tasks, out.tasks);
+    mergeMap(a.goals, b.goals, out.goals);
     if (a.notes.updatedAt >= b.notes.updatedAt) {
       out.notes = a.notes;
-      if (a.notes.updatedAt > b.notes.updatedAt) remoteChanged = true;
+      if (a.notes.updatedAt > b.notes.updatedAt) flags.remoteChanged = true;
     } else {
       out.notes = b.notes;
-      localChanged = true;
+      flags.localChanged = true;
     }
-
     merged.weeks[key] = out;
   }
 
-  return { merged, localChanged, remoteChanged };
+  mergeMap(local.rules, remote.rules, merged.rules);
+  return { merged, ...flags };
+}
+
+/**
+ * Limpieza: quita las marcas de borrado de hace más de 60 días y las semanas
+ * que se quedan vacías. Así el archivo no crece sin límite.
+ * (Las marcas de tareas repetidas se conservan: sin ellas, la tarea
+ * reaparecería en esa semana.)
+ */
+export function prune(state, now = Date.now()) {
+  const cutoff = now - PRUNE_AFTER_MS;
+  for (const [key, w] of Object.entries(state.weeks)) {
+    for (const kind of ['tasks', 'goals']) {
+      for (const [id, it] of Object.entries(w[kind])) {
+        if (it.deleted && it.updatedAt < cutoff && !parseOcc(id)) delete w[kind][id];
+      }
+    }
+    const empty = !Object.keys(w.tasks).length && !Object.keys(w.goals).length
+      && w.notes.text === '' && w.notes.updatedAt < cutoff;
+    if (empty) delete state.weeks[key];
+  }
+  return state;
+}
+
+// ---------------------------------------------------------------- tareas repetidas
+
+export const occId = (ruleId, slot) => `r:${ruleId}:${slot}`;
+
+export function parseOcc(id) {
+  const m = /^r:(.+):([0-6])$/.exec(id);
+  return m ? { ruleId: m[1], slot: Number(m[2]) } : null;
+}
+
+/** ¿La regla está activa en la semana `key`? */
+export function ruleCovers(rule, key) {
+  return !!rule && !rule.deleted && rule.from <= key && (!rule.until || key < rule.until);
+}
+
+/**
+ * Tareas que se ven en una semana: las normales más las repetidas.
+ * Las repetidas llevan { ruleId, slot, repeats } y, si aún no se han
+ * guardado en la semana, { virtual: true }.
+ */
+export function weekTasks(state, key) {
+  const stored = state.weeks[key] ? state.weeks[key].tasks : {};
+  const out = [];
+
+  for (const t of Object.values(stored)) {
+    if (t.deleted) continue;
+    const occ = parseOcc(t.id);
+    if (!occ) { out.push(t); continue; }
+    const rule = state.rules[occ.ruleId];
+    const repeats = ruleCovers(rule, key) && rule.days.includes(occ.slot);
+    // Si la regla ya no aplica, la tarea solo se conserva si se llegó a hacer.
+    if (repeats || t.done) {
+      out.push({ ...t, text: repeats ? rule.text : t.text, ruleId: occ.ruleId, slot: occ.slot, repeats });
+    }
+  }
+
+  for (const rule of Object.values(state.rules)) {
+    if (!ruleCovers(rule, key)) continue;
+    for (const slot of rule.days) {
+      const id = occId(rule.id, slot);
+      if (stored[id]) continue;
+      out.push({
+        id, text: rule.text, done: false, day: slot, order: rule.order, updatedAt: 0,
+        ruleId: rule.id, slot, repeats: true, virtual: true,
+      });
+    }
+  }
+
+  return out.sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : 1));
 }
 
 /** Marca de tiempo estrictamente creciente respecto a la anterior. */

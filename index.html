@@ -14,6 +14,13 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <!-- Aplica el tema elegido antes de pintar, para que no parpadee. -->
+  <script>
+    try {
+      var t = localStorage.getItem('planning-semanal:theme');
+      if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="app.js"></script>
 </head>
@@ -22,7 +29,10 @@
     <div class="topbar-inner">
       <div class="brand">
         <h1>Planning semanal</h1>
-        <p class="week-label" id="weekLabel" aria-live="polite"></p>
+        <p class="week-label" aria-live="polite">
+          <span id="weekLabel"></span><span class="this-week" id="thisWeekTag"> · esta semana</span>
+        </p>
+        <p class="progress-text" id="progressText"></p>
       </div>
       <nav class="week-nav" aria-label="Cambiar de semana">
         <button class="icon-btn" id="prevWeek" aria-label="Semana anterior" title="Semana anterior">
@@ -33,14 +43,20 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
         </button>
       </nav>
-      <button class="sync-btn" id="syncBtn" data-state="off" title="Sincronización">
-        <span class="sync-dot" aria-hidden="true"></span>
+      <button class="settings-btn" id="settingsBtn" data-state="off" aria-label="Ajustes y sincronización" title="Ajustes y sincronización">
+        <span class="settings-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span class="sync-dot" aria-hidden="true"></span>
+        </span>
         <span class="sync-text" id="syncText">Sin sincronizar</span>
       </button>
     </div>
+    <div class="progress" id="progressBar" role="progressbar" aria-label="Progreso de la semana" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
   </header>
 
-  <main class="page">
+  <main class="page" id="page">
     <section class="overview">
       <article class="card">
         <header class="card-head">
@@ -62,8 +78,18 @@
       </article>
     </section>
 
+    <div class="week-actions" id="weekActions" hidden>
+      <button type="button" class="carry-btn" id="carryBtn"></button>
+    </div>
+
     <section class="days" id="days" aria-label="Días de la semana"></section>
   </main>
+
+  <!-- Aviso breve (deshacer, estado de la sincronización…) -->
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden>
+    <span class="toast-msg" id="toastMsg"></span>
+    <button type="button" class="toast-action" id="toastAction"></button>
+  </div>
 
   <!-- Editar tarea / objetivo -->
   <dialog id="itemDialog" class="sheet">
@@ -71,14 +97,19 @@
       <h2 id="itemDialogTitle">Editar tarea</h2>
       <label class="field">
         <span>Texto</span>
-        <textarea id="itemText" rows="3" required></textarea>
+        <textarea id="itemText" rows="2" required></textarea>
       </label>
-      <div id="moveGroup" class="move-group">
+      <div id="moveGroup" class="option-group">
         <span class="field-label">Mover a</span>
-        <div class="move-grid" id="moveGrid"></div>
+        <div class="day-grid" id="moveGrid"></div>
+      </div>
+      <div id="repeatGroup" class="option-group">
+        <span class="field-label">Repetir cada semana</span>
+        <div class="day-grid" id="repeatGrid"></div>
+        <p class="option-hint" id="repeatHint"></p>
       </div>
       <div class="dialog-actions">
-        <button value="delete" class="btn danger" formnovalidate>Eliminar</button>
+        <button value="delete" class="btn danger" id="itemDelete" formnovalidate>Eliminar</button>
         <span class="spacer"></span>
         <button value="cancel" class="btn" formnovalidate>Cancelar</button>
         <button value="save" class="btn primary">Guardar</button>
@@ -86,19 +117,32 @@
     </form>
   </dialog>
 
-  <!-- Sincronización -->
-  <dialog id="syncDialog" class="sheet">
-    <form method="dialog" id="syncForm">
-      <h2>Sincronizar dispositivos</h2>
-      <p class="hint">Tus datos se guardan en un <strong>Gist secreto</strong> de tu cuenta de GitHub. Haz esto una vez en cada dispositivo (ordenador y móvil):</p>
-      <ol class="steps">
-        <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Planning%20semanal" target="_blank" rel="noopener">Crea un token de GitHub</a> marcando solo el permiso <code>gist</code> (puedes poner caducidad «No expiration»).</li>
-        <li>Cópialo y pégalo aquí debajo.</li>
-      </ol>
-      <label class="field">
-        <span>Token de GitHub</span>
-        <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_…">
-      </label>
+  <!-- Ajustes: apariencia y sincronización -->
+  <dialog id="settingsDialog" class="sheet">
+    <form method="dialog" id="settingsForm">
+      <h2>Ajustes</h2>
+
+      <div class="option-group">
+        <span class="field-label">Apariencia</span>
+        <div class="segmented" id="themeChoice" role="group" aria-label="Apariencia">
+          <button type="button" data-theme-choice="system">Sistema</button>
+          <button type="button" data-theme-choice="light">Claro</button>
+          <button type="button" data-theme-choice="dark">Oscuro</button>
+        </div>
+      </div>
+
+      <h3>Sincronizar dispositivos</h3>
+      <div id="syncSetup">
+        <p class="hint">Tus datos se guardan en un <strong>Gist secreto</strong> de tu cuenta de GitHub. Haz esto una vez en cada dispositivo (ordenador y móvil):</p>
+        <ol class="steps">
+          <li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Planning%20semanal" target="_blank" rel="noopener">Crea un token de GitHub</a> marcando solo el permiso <code>gist</code> (puedes poner caducidad «No expiration»).</li>
+          <li>Cópialo y pégalo aquí debajo.</li>
+        </ol>
+        <label class="field">
+          <span>Token de GitHub</span>
+          <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_…">
+        </label>
+      </div>
       <p class="sync-info" id="syncInfo" role="status"></p>
       <div class="dialog-actions">
         <button type="button" class="btn danger" id="disconnectBtn">Desconectar</button>

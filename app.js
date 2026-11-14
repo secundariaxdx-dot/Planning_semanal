@@ -1,7 +1,8 @@
-import { emptyWeek, normalizeState, stamp, uid } from './store.js';
+import { emptyWeek, normalizeState, occId, parseOcc, prune, stamp, uid, weekTasks } from './store.js';
 import { GistSync } from './sync.js';
 
 const STORAGE_KEY = 'planning-semanal:data';
+const THEME_KEY = 'planning-semanal:theme';
 const DAY_NAMES = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 const DAY_SHORT = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
@@ -18,10 +19,11 @@ const el = (tag, props = {}, ...children) => {
   for (const c of children.flat()) if (c != null) node.append(c);
   return node;
 };
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // ---------------------------------------------------------------- estado
 
-let state = load();
+let state = prune(load());
 
 function load() {
   try { return normalizeState(JSON.parse(localStorage.getItem(STORAGE_KEY))); }
@@ -41,9 +43,21 @@ const mondayOf = (date) => {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   return addDays(d, -((d.getDay() + 6) % 7));
 };
+const shiftWeek = (key, n) => keyOf(addDays(dateOfKey(key), 7 * n));
 const fmtDay = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short' });
-const fmtDayYear = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtMonth = new Intl.DateTimeFormat('es-ES', { month: 'short' });
 const fmtTime = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+/** «9 – 15 nov», «30 nov – 6 dic»; el año solo si no es el actual. */
+function weekRangeLabel(monday) {
+  const sunday = addDays(monday, 6);
+  const [y1, y2] = [monday.getFullYear(), sunday.getFullYear()];
+  const [m1, m2] = [fmtMonth.format(monday), fmtMonth.format(sunday)];
+  const [d1, d2] = [monday.getDate(), sunday.getDate()];
+  if (y1 !== y2) return `${d1} ${m1} ${y1} – ${d2} ${m2} ${y2}`;
+  const year = y1 === new Date().getFullYear() ? '' : ` ${y1}`;
+  return m1 === m2 ? `${d1} – ${d2} ${m1}${year}` : `${d1} ${m1} – ${d2} ${m2}${year}`;
+}
 
 const thisWeekKey = () => keyOf(mondayOf(new Date()));
 let currentKey = thisWeekKey();
@@ -54,7 +68,9 @@ function week(key = currentKey) {
   return state.weeks[key] || (state.weeks[key] = emptyWeek());
 }
 const live = (map) => Object.values(map).filter((it) => !it.deleted).sort((a, b) => a.order - b.order);
-const tasksOf = (w, day) => live(w.tasks).filter((t) => t.day === day);
+const goalsOf = (key) => live((state.weeks[key] || emptyWeek()).goals);
+const dayTasks = (key, day) => weekTasks(state, key).filter((t) => t.day === day);
+const findTask = (id, key = currentKey) => weekTasks(state, key).find((t) => t.id === id) || null;
 
 function commit() {
   persist();
@@ -62,22 +78,30 @@ function commit() {
   sync.schedule();
 }
 
-function addTask(day, text, key = currentKey) {
+/** Tarea guardada; si es una repetida que aún no se había tocado, la guarda ahora. */
+function storedTask(id, key = currentKey) {
   const w = week(key);
-  const last = tasksOf(w, day).at(-1);
-  const id = uid();
-  w.tasks[id] = { id, text, done: false, day, order: last ? last.order + 1 : 0, updatedAt: stamp() };
+  if (w.tasks[id]) return w.tasks[id];
+  const occ = parseOcc(id);
+  const rule = occ && state.rules[occ.ruleId];
+  if (!rule) return null;
+  return (w.tasks[id] = { id, text: rule.text, done: false, day: occ.slot, order: rule.order, updatedAt: 0 });
 }
 
-function addGoal(text) {
-  const w = week();
-  const last = live(w.goals).at(-1);
+function addTask(day, text, key = currentKey, extra = {}) {
+  const last = dayTasks(key, day).at(-1);
   const id = uid();
-  w.goals[id] = { id, text, done: false, order: last ? last.order + 1 : 0, updatedAt: stamp() };
+  week(key).tasks[id] = { id, text, done: false, day, order: last ? last.order + 1 : 0, updatedAt: stamp(), ...extra };
+}
+
+function addGoal(text, key = currentKey, extra = {}) {
+  const last = goalsOf(key).at(-1);
+  const id = uid();
+  week(key).goals[id] = { id, text, done: false, order: last ? last.order + 1 : 0, updatedAt: stamp(), ...extra };
 }
 
 function updateItem(kind, id, patch, key = currentKey) {
-  const it = week(key)[kind][id];
+  const it = kind === 'tasks' ? storedTask(id, key) : week(key).goals[id];
   if (!it) return;
   Object.assign(it, patch, { updatedAt: stamp(it.updatedAt) });
 }
@@ -88,8 +112,7 @@ function removeItem(kind, id, key = currentKey) {
 
 /** Mueve una tarea a otro día, opcionalmente antes de otra tarea. */
 function moveTask(id, day, beforeId = null) {
-  const w = week();
-  const list = tasksOf(w, day).filter((t) => t.id !== id);
+  const list = dayTasks(currentKey, day).filter((t) => t.id !== id);
   let order;
   const idx = beforeId ? list.findIndex((t) => t.id === beforeId) : -1;
   if (idx === -1) order = list.length ? list.at(-1).order + 1 : 0;
@@ -98,18 +121,170 @@ function moveTask(id, day, beforeId = null) {
   updateItem('tasks', id, { day, order });
 }
 
-function moveTaskToNextWeek(id) {
-  const t = week().tasks[id];
+// ---------- pendientes → semana siguiente
+
+/** Lo que queda sin hacer en una semana (las tareas repetidas no cuentan: vuelven solas). */
+function pendingOf(key) {
+  return {
+    tasks: weekTasks(state, key).filter((t) => !t.done && !t.ruleId),
+    goals: goalsOf(key).filter((g) => !g.done),
+  };
+}
+
+function carryTask(t, from, to) {
+  addTask(t.day, t.text, to, { pending: true });
+  removeItem('tasks', t.id, from);
+}
+
+function carryOver() {
+  const from = currentKey;
+  const to = shiftWeek(from, 1);
+  const { tasks, goals } = pendingOf(from);
+  const n = tasks.length + goals.length;
+  if (!n) return;
+  undoable(`${plural(n, 'pendiente pasado', 'pendientes pasados')} a la semana siguiente.`, [from, to], () => {
+    for (const t of tasks) carryTask(t, from, to);
+    for (const g of goals) {
+      addGoal(g.text, to, { pending: true, ...(g.started ? { started: true } : {}) });
+      removeItem('goals', g.id, from);
+    }
+  });
+}
+
+// ---------- tareas repetidas
+
+/** Convierte una tarea normal en una que se repite cada semana en `days`. */
+function convertToRule(id, days) {
+  const w = week();
+  const t = w.tasks[id];
   if (!t) return;
-  const nextKey = keyOf(addDays(dateOfKey(currentKey), 7));
-  addTask(t.day, t.text, nextKey);
+  const rule = { id: uid(), text: t.text, days, from: currentKey, until: null, order: Date.now(), updatedAt: stamp() };
+  state.rules[rule.id] = rule;
+  if (days.includes(t.day)) {
+    const oid = occId(rule.id, t.day);
+    w.tasks[oid] = { id: oid, text: t.text, done: t.done, day: t.day, order: t.order, updatedAt: stamp() };
+  }
   removeItem('tasks', id);
+}
+
+/** Cambia los días de una tarea repetida, a partir de la semana que se está viendo. */
+function changeRuleDays(rule, days, item) {
+  const K = currentKey;
+  if (!days.length) {
+    // Deja de repetirse; la de esta semana se queda como tarea normal.
+    const id = uid();
+    week(K).tasks[id] = { id, text: rule.text, done: item.done, day: item.day, order: item.order, updatedAt: stamp() };
+    removeItem('tasks', item.id);
+    if (rule.from >= K) rule.deleted = true; else rule.until = K;
+  } else if (rule.from >= K) {
+    rule.days = days; // empezó esta semana: no hay historial que proteger
+  } else {
+    // Las semanas anteriores conservan los días de antes: la regla vieja acaba
+    // aquí y una nueva toma el relevo.
+    const next = {
+      id: uid(), text: rule.text, days, from: K, until: rule.until, order: rule.order, updatedAt: stamp(),
+    };
+    state.rules[next.id] = next;
+    rule.until = K;
+    for (const [key, w] of Object.entries(state.weeks)) {
+      if (key < K) continue;
+      for (const slot of days) {
+        const t = w.tasks[occId(rule.id, slot)];
+        if (!t) continue;
+        const nid = occId(next.id, slot);
+        w.tasks[nid] = { ...t, id: nid, updatedAt: stamp() };
+        if (!t.deleted) removeItem('tasks', t.id, key);
+      }
+    }
+  }
+  rule.updatedAt = stamp(rule.updatedAt);
+}
+
+// ---------- deshacer
+
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const sameItem = (a, b) => {
+  const strip = ({ updatedAt, ...rest }) => JSON.stringify(Object.entries(rest).sort());
+  return strip(a) === strip(b);
+};
+
+function snapshot(keys) {
+  return {
+    weeks: Object.fromEntries(keys.map((k) => [k, state.weeks[k] ? clone(state.weeks[k]) : null])),
+    rules: clone(state.rules),
+  };
+}
+
+/** Devuelve las semanas y reglas de la foto a como estaban (con marcas de tiempo nuevas, para que sincronice). */
+function restore(snap) {
+  for (const [id, cur] of Object.entries(state.rules)) {
+    const old = snap.rules[id];
+    if (old) { if (!sameItem(old, cur)) state.rules[id] = { ...old, updatedAt: stamp(cur.updatedAt) }; }
+    else if (!cur.deleted) state.rules[id] = { ...cur, deleted: true, updatedAt: stamp(cur.updatedAt) };
+  }
+  for (const [key, prev] of Object.entries(snap.weeks)) {
+    const w = state.weeks[key];
+    if (!w) continue;
+    for (const kind of ['tasks', 'goals']) {
+      for (const [id, cur] of Object.entries(w[kind])) {
+        const old = prev && prev[kind][id];
+        const at = stamp(cur.updatedAt);
+        const occ = kind === 'tasks' ? parseOcc(id) : null;
+        if (old) {
+          if (!sameItem(old, cur)) w[kind][id] = { ...old, updatedAt: at };
+        } else if (occ && snap.rules[occ.ruleId]) {
+          // Era una repetida sin tocar: vuelve a su estado inicial.
+          const rule = snap.rules[occ.ruleId];
+          w[kind][id] = { id, text: rule.text, done: false, day: occ.slot, order: rule.order, updatedAt: at };
+        } else if (!cur.deleted) {
+          w[kind][id] = { ...cur, deleted: true, updatedAt: at };
+        }
+      }
+    }
+  }
+}
+
+/** Hace un cambio y muestra un aviso con «Deshacer». */
+function undoable(message, keys, fn) {
+  const snap = snapshot(keys);
+  fn();
+  commit();
+  toast(message, { action: 'Deshacer', duration: 7000, onAction: () => { restore(snap); commit(); } });
+}
+
+// ---------------------------------------------------------------- aviso (toast)
+
+const toastEl = $('#toast');
+let toastTimer = null;
+let toastHasAction = false;
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  toastEl.hidden = true;
+  toastHasAction = false;
+}
+
+/** `low`: aviso informativo que no debe tapar uno con botón (p. ej. «Deshacer»). */
+function toast(message, { action = '', onAction = null, duration = 4000, low = false } = {}) {
+  if (low && toastHasAction && !toastEl.hidden) return;
+  clearTimeout(toastTimer);
+  $('#toastMsg').textContent = message;
+  const btn = $('#toastAction');
+  btn.hidden = !action;
+  btn.textContent = action;
+  btn.onclick = () => { hideToast(); onAction?.(); };
+  toastHasAction = !!action;
+  toastEl.hidden = true;
+  void toastEl.offsetWidth; // reinicia la animación
+  toastEl.hidden = false;
+  toastTimer = setTimeout(hideToast, duration);
 }
 
 // ---------------------------------------------------------------- render
 
 let pendingRender = false;
 let focusAfterRender = null;
+let addingDay = null; // día con la caja «Añadir tarea» abierta (móvil)
 
 /** Evita redibujar mientras el usuario escribe o tiene un diálogo abierto. */
 function isUserBusy() {
@@ -132,19 +307,18 @@ function render() {
   pendingRender = false;
   const w = state.weeks[currentKey] || emptyWeek();
   const monday = dateOfKey(currentKey);
-  const sunday = addDays(monday, 6);
   const todayKey = keyOf(new Date());
   const isThisWeek = currentKey === thisWeekKey();
+  const tasks = weekTasks(state, currentKey);
+  const goals = live(w.goals);
 
   // Cabecera
-  const sameYear = monday.getFullYear() === sunday.getFullYear();
-  $('#weekLabel').textContent =
-    `${(sameYear ? fmtDay : fmtDayYear).format(monday)} – ${fmtDayYear.format(sunday)}` +
-    (isThisWeek ? ' · esta semana' : '');
+  $('#weekLabel').textContent = weekRangeLabel(monday);
+  $('#thisWeekTag').hidden = !isThisWeek;
   $('#todayBtn').disabled = isThisWeek;
+  renderProgress(tasks, goals);
 
   // Objetivos
-  const goals = live(w.goals);
   $('#goalCount').textContent = goals.length ? `${goals.filter((g) => g.done).length}/${goals.length}` : '';
   $('#goalList').replaceChildren(
     ...(goals.length ? goals.map((g) => itemRow('goals', g)) : [el('li', { class: 'empty' }, 'Sin objetivos todavía.')]),
@@ -155,53 +329,98 @@ function render() {
   if (document.activeElement !== notes) notes.value = w.notes.text;
   $('#notesState').textContent = '';
 
+  // Pasar pendientes
+  const pending = pendingOf(currentKey);
+  const nPending = pending.tasks.length + pending.goals.length;
+  $('#weekActions').hidden = !nPending;
+  $('#carryBtn').textContent = `Pasar ${plural(nPending, 'pendiente', 'pendientes')} a la semana siguiente →`;
+
   // Días
-  const days = DAY_NAMES.map((name, day) => {
+  $('#days').replaceChildren(...DAY_NAMES.map((name, day) => {
     const date = addDays(monday, day);
     const dateKey = keyOf(date);
-    const tasks = tasksOf(w, day);
-    const done = tasks.filter((t) => t.done).length;
+    const list = tasks.filter((t) => t.day === day);
     const isToday = dateKey === todayKey;
-    const list = el('ul', { class: 'items', dataset: { day } },
-      tasks.map((t) => itemRow('tasks', t)));
-    attachDrop(list, day);
-    const input = el('input', {
-      name: 'text', placeholder: 'Añadir tarea…', 'aria-label': `Añadir tarea el ${name.toLowerCase()}`,
-      enterkeyhint: 'done', id: `add-${day}`,
-    });
-    const form = el('form', {
-      class: 'add-form', autocomplete: 'off',
-      onsubmit: (e) => {
-        e.preventDefault();
-        const text = input.value.trim();
-        if (!text) return;
-        addTask(day, text);
-        input.value = '';
-        focusAfterRender = `add-${day}`;
-        commit();
-      },
-    }, input, el('button', { class: 'add-btn', 'aria-label': 'Añadir tarea' }, '+'));
-
-    return el('section', {
-      class: `day${isToday ? ' is-today' : ''}${dateKey < todayKey ? ' is-past' : ''}`,
-      dataset: { day }, id: `day-${day}`,
-    },
-      el('header', { class: 'day-head' },
-        el('h2', {},
-          el('span', { class: 'day-name' }, name),
-          el('span', { class: 'day-date' }, fmtDay.format(date)),
-          isToday ? el('span', { class: 'today-tag' }, 'Hoy') : null),
-        el('span', { class: 'count' }, tasks.length ? `${done}/${tasks.length}` : '')),
-      list,
-      form);
-  });
-  $('#days').replaceChildren(...days);
+    return dayCard({ name, day, date, list, isToday, isPast: dateKey < todayKey });
+  }));
 
   if (focusAfterRender) {
     const target = document.getElementById(focusAfterRender);
     focusAfterRender = null;
     target?.focus();
   }
+}
+
+function renderProgress(tasks, goals) {
+  const doneT = tasks.filter((t) => t.done).length;
+  const doneG = goals.filter((g) => g.done).length;
+  const started = goals.filter((g) => g.started && !g.done).length;
+  const total = tasks.length + goals.length;
+  const pct = total ? Math.round(((doneT + doneG) / total) * 100) : 0;
+
+  const parts = [];
+  if (tasks.length) parts.push(el('span', {}, `${doneT}/${tasks.length} ${tasks.length === 1 ? 'tarea' : 'tareas'}`));
+  if (goals.length) parts.push(el('span', {}, `${doneG}/${goals.length} ${goals.length === 1 ? 'objetivo' : 'objetivos'}`));
+  if (started) parts.push(el('span', { class: 'started-count' }, plural(started, 'empezado', 'empezados')));
+  $('#progressText').replaceChildren(...parts);
+
+  const fill = $('#progressFill');
+  fill.style.width = `${pct}%`;
+  fill.classList.toggle('complete', total > 0 && pct === 100);
+  $('#progressBar').setAttribute('aria-valuenow', pct);
+}
+
+function dayCard({ name, day, date, list, isToday, isPast }) {
+  const done = list.filter((t) => t.done).length;
+  const ul = el('ul', { class: 'items', dataset: { day } }, list.map((t) => itemRow('tasks', t)));
+  attachDrop(ul, day);
+
+  const input = el('input', {
+    name: 'text', placeholder: 'Añadir tarea…', 'aria-label': `Añadir tarea el ${name.toLowerCase()}`,
+    enterkeyhint: 'done', id: `add-${day}`,
+  });
+  const form = el('form', {
+    class: 'add-form', autocomplete: 'off',
+    onsubmit: (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      addTask(day, text);
+      input.value = '';
+      addingDay = day;
+      focusAfterRender = `add-${day}`;
+      commit();
+    },
+  }, input, el('button', { class: 'add-btn', 'aria-label': 'Añadir tarea' }, '+'));
+
+  const section = el('section', {
+    class: `day${isToday ? ' is-today' : ''}${isPast ? ' is-past' : ''}${addingDay === day ? ' adding' : ''}`,
+    dataset: { day }, id: `day-${day}`,
+  },
+    el('header', { class: 'day-head' },
+      el('h2', {},
+        el('span', { class: 'day-name' }, name),
+        el('span', { class: 'day-date' }, fmtDay.format(date)),
+        isToday ? el('span', { class: 'today-tag' }, 'Hoy') : null),
+      el('span', { class: 'count' }, list.length ? `${done}/${list.length}` : ''),
+      // En el móvil la caja de añadir está plegada y se abre con este botón.
+      el('button', {
+        type: 'button', class: 'day-add', 'aria-label': `Nueva tarea el ${name.toLowerCase()}`,
+        onclick: () => { addingDay = day; section.classList.add('adding'); input.focus(); },
+      }, '+')),
+    ul,
+    form);
+
+  // Al salir de la caja vacía, se vuelve a plegar.
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (!input.isConnected || addingDay !== day) return;
+    if (input.value.trim() === '' && !form.contains(document.activeElement)) {
+      addingDay = null;
+      section.classList.remove('adding');
+    }
+  }, 150));
+
+  return section;
 }
 
 function itemRow(kind, item) {
@@ -217,7 +436,10 @@ function itemRow(kind, item) {
     el('button', {
       type: 'button', class: 'item-text', title: 'Editar',
       onclick: () => openItemDialog(kind, item.id),
-    }, item.text),
+    },
+      item.text,
+      item.pending ? el('span', { class: 'tag-pending' }, 'Pendiente') : null,
+      item.repeats ? el('span', { class: 'repeat-mark', title: 'Se repite cada semana', 'aria-label': 'Se repite cada semana' }, '↻') : null),
     // Objetivos: circulito naranja = «empezado pero no acabado».
     kind === 'goals' ? el('button', {
       type: 'button', class: 'started-btn',
@@ -260,7 +482,7 @@ function attachDrop(list, day) {
     list.classList.remove('drop-target');
     clear();
     const id = e.dataTransfer.getData('text/plain');
-    if (!id || !week().tasks[id]) return;
+    if (!id || !findTask(id)) return;
     const over = e.target.closest('.item');
     const beforeId = over && over.dataset.id !== id ? over.dataset.id : null;
     moveTask(id, day, beforeId);
@@ -273,22 +495,52 @@ function attachDrop(list, day) {
 const itemDialog = $('#itemDialog');
 let editing = null;
 
+const listDays = (days) => {
+  if (days.length === 7) return 'todos los días';
+  const names = days.map((d) => DAY_NAMES[d].toLowerCase());
+  return names.length > 1 ? `cada ${names.slice(0, -1).join(', ')} y ${names.at(-1)}` : `cada ${names[0]}`;
+};
+
+function refreshRepeatHint() {
+  const days = [...editing.days].sort((a, b) => a - b);
+  $('#repeatHint').textContent = editing.repeats
+    ? (days.length ? `Se repite ${listDays(days)}. Los cambios valen desde esta semana.`
+      : 'Dejará de repetirse. La de esta semana se queda como tarea normal.')
+    : (days.length ? `Se repetirá ${listDays(days)}, desde esta semana.`
+      : 'Elige días si quieres que se repita todas las semanas.');
+}
+
 function openItemDialog(kind, id) {
-  const it = week()[kind][id];
-  if (!it) return;
-  editing = { kind, id, key: currentKey };
+  const it = kind === 'tasks' ? findTask(id) : week().goals[id];
+  if (!it || it.deleted) return;
+  const rule = it.repeats ? state.rules[it.ruleId] : null;
+  editing = { kind, id, key: currentKey, repeats: !!rule, days: new Set(rule ? rule.days : []) };
+
   $('#itemDialogTitle').textContent = kind === 'tasks' ? 'Editar tarea' : 'Editar objetivo';
   $('#itemText').value = it.text;
-  const moveGroup = $('#moveGroup');
-  moveGroup.hidden = kind !== 'tasks';
+  $('#itemDelete').textContent = rule ? 'Quitar esta semana' : 'Eliminar';
+  $('#moveGroup').hidden = $('#repeatGroup').hidden = kind !== 'tasks';
+
   if (kind === 'tasks') {
     $('#moveGrid').replaceChildren(
       ...DAY_SHORT.map((s, d) => el('button', {
-        value: `move:${d}`, class: 'move-btn', title: DAY_NAMES[d],
+        value: `move:${d}`, class: 'day-btn', title: DAY_NAMES[d],
         'aria-label': `Mover al ${DAY_NAMES[d].toLowerCase()}`, 'aria-current': d === it.day ? 'true' : 'false',
       }, s)),
-      el('button', { value: 'move:next', class: 'move-btn move-wide' }, 'Pasar a la semana siguiente →'),
+      // Una repetida ya aparece sola la semana siguiente.
+      rule ? null : el('button', { value: 'move:next', class: 'day-btn wide' }, 'Pasar a la semana siguiente →'),
     );
+    $('#repeatGrid').replaceChildren(...DAY_SHORT.map((s, d) => el('button', {
+      type: 'button', class: 'day-btn', title: DAY_NAMES[d],
+      'aria-label': `Repetir cada ${DAY_NAMES[d].toLowerCase()}`,
+      'aria-pressed': editing.days.has(d) ? 'true' : 'false',
+      onclick: (e) => {
+        if (editing.days.has(d)) editing.days.delete(d); else editing.days.add(d);
+        e.currentTarget.setAttribute('aria-pressed', editing.days.has(d) ? 'true' : 'false');
+        refreshRepeatHint();
+      },
+    }, s)));
+    refreshRepeatHint();
   }
   itemDialog.showModal();
   // En móvil no abrir el teclado automáticamente.
@@ -304,28 +556,51 @@ itemDialog.addEventListener('close', () => {
   itemDialog.returnValue = '';
   const ed = editing;
   editing = null;
-  if (!ed || ed.key !== currentKey) { if (pendingRender) render(); return; }
-  const it = week()[ed.kind][ed.id];
-  if (!it || it.deleted) { render(); return; }
+  const isChange = action === 'delete' || action === 'save' || action.startsWith('move:');
+  if (!ed || ed.key !== currentKey || !isChange) { if (pendingRender) render(); return; }
+
+  const { kind, id } = ed;
+  const item = kind === 'tasks' ? findTask(id) : week().goals[id];
+  if (!item || item.deleted) { render(); return; }
   const text = $('#itemText').value.trim();
 
   if (action === 'delete') {
-    removeItem(ed.kind, ed.id);
-  } else if (action === 'save' || action.startsWith('move:')) {
-    if (text && text !== it.text) updateItem(ed.kind, ed.id, { text });
-    if (action === 'move:next') moveTaskToNextWeek(ed.id);
-    else if (action.startsWith('move:')) {
-      const day = Number(action.slice(5));
-      if (day !== it.day) moveTask(ed.id, day);
-    }
-  } else {
-    if (pendingRender) render();
+    const what = kind === 'goals' ? 'Objetivo eliminado.' : item.repeats ? 'Tarea quitada de esta semana.' : 'Tarea eliminada.';
+    undoable(what, [currentKey], () => removeItem(kind, id));
     return;
+  }
+
+  if (kind === 'goals') {
+    if (text && text !== item.text) updateItem('goals', id, { text });
+    commit();
+    return;
+  }
+
+  const days = [...ed.days].sort((a, b) => a - b);
+  const rule = item.repeats ? state.rules[item.ruleId] : null;
+  let replaced = false; // la tarea ha pasado a ser otra (con otro id)
+
+  if (rule) {
+    if (text && text !== rule.text) { rule.text = text; rule.updatedAt = stamp(rule.updatedAt); }
+    if (days.join() !== rule.days.join()) { changeRuleDays(rule, days, item); replaced = true; }
+  } else {
+    if (text && text !== item.text) updateItem('tasks', id, { text });
+    if (days.length) { convertToRule(id, days); replaced = true; }
+  }
+
+  if (!replaced && action === 'move:next') {
+    const to = shiftWeek(currentKey, 1);
+    undoable('Tarea pasada a la semana siguiente.', [currentKey, to], () => carryTask(findTask(id), currentKey, to));
+    return;
+  }
+  if (!replaced && action.startsWith('move:')) {
+    const day = Number(action.slice(5));
+    if (day !== item.day) moveTask(id, day);
   }
   commit();
 });
 
-// ---------------------------------------------------------------- objetivos y notas
+// ---------------------------------------------------------------- objetivos, notas y pendientes
 
 $('#goalForm').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -338,91 +613,175 @@ $('#goalForm').addEventListener('submit', (e) => {
   commit();
 });
 
+$('#carryBtn').addEventListener('click', carryOver);
+
 let notesTimer = null;
+function saveNotes(key, value) {
+  const w = week(key);
+  if (value === w.notes.text) return;
+  w.notes = { text: value, updatedAt: stamp(w.notes.updatedAt) };
+  persist();
+  sync.schedule();
+}
 $('#notes').addEventListener('input', (e) => {
   const key = currentKey;
   const value = e.target.value;
   $('#notesState').textContent = 'Guardando…';
   clearTimeout(notesTimer);
   notesTimer = setTimeout(() => {
-    const w = week(key);
-    w.notes = { text: value, updatedAt: stamp(w.notes.updatedAt) };
-    persist();
-    sync.schedule();
+    notesTimer = null;
+    saveNotes(key, value);
     $('#notesState').textContent = 'Guardado';
   }, 400);
 });
 $('#notes').addEventListener('blur', () => {
   // Guardar al instante si quedaba algo pendiente.
-  if (notesTimer) {
-    clearTimeout(notesTimer);
-    notesTimer = null;
-    const w = week();
-    const value = $('#notes').value;
-    if (value !== w.notes.text) {
-      w.notes = { text: value, updatedAt: stamp(w.notes.updatedAt) };
-      persist();
-      sync.schedule();
-    }
-    $('#notesState').textContent = '';
-  }
+  if (!notesTimer) return;
+  clearTimeout(notesTimer);
+  notesTimer = null;
+  saveNotes(currentKey, $('#notes').value);
+  $('#notesState').textContent = '';
 });
 
 // ---------------------------------------------------------------- navegación
 
-function goToWeek(key) {
+const page = $('#page');
+
+/** `dir`: 'next' | 'prev' para animar el cambio. */
+function goToWeek(key, dir = null) {
+  if (key === currentKey) return;
   $('#notes').blur();
+  addingDay = null;
   currentKey = key;
   render();
+  page.classList.remove('slide-left', 'slide-right');
+  if (dir) {
+    void page.offsetWidth;
+    page.classList.add(dir === 'next' ? 'slide-left' : 'slide-right');
+  }
 }
-$('#prevWeek').addEventListener('click', () => goToWeek(keyOf(addDays(dateOfKey(currentKey), -7))));
-$('#nextWeek').addEventListener('click', () => goToWeek(keyOf(addDays(dateOfKey(currentKey), 7))));
-$('#todayBtn').addEventListener('click', () => { goToWeek(thisWeekKey()); scrollToGoals(); });
+const goPrev = () => goToWeek(shiftWeek(currentKey, -1), 'prev');
+const goNext = () => goToWeek(shiftWeek(currentKey, 1), 'next');
+
+$('#prevWeek').addEventListener('click', goPrev);
+$('#nextWeek').addEventListener('click', goNext);
+$('#todayBtn').addEventListener('click', () => {
+  const key = thisWeekKey();
+  goToWeek(key, key > currentKey ? 'next' : 'prev');
+  scrollToGoals();
+});
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea') || document.querySelector('dialog[open]')) return;
-  if (e.key === 'ArrowLeft') $('#prevWeek').click();
-  if (e.key === 'ArrowRight') $('#nextWeek').click();
+  if (e.key === 'ArrowLeft') goPrev();
+  if (e.key === 'ArrowRight') goNext();
 });
+
+// Deslizar con el dedo a izquierda o derecha para cambiar de semana.
+let swipe = null;
+page.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  const edge = 24; // los bordes se dejan para los gestos del navegador
+  swipe = (e.touches.length === 1 && !e.target.closest('input, textarea')
+    && t.clientX > edge && t.clientX < innerWidth - edge)
+    ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
+}, { passive: true });
+page.addEventListener('touchmove', (e) => { if (e.touches.length > 1) swipe = null; }, { passive: true });
+page.addEventListener('touchcancel', () => { swipe = null; }, { passive: true });
+page.addEventListener('touchend', (e) => {
+  if (!swipe) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipe.x;
+  const dy = t.clientY - swipe.y;
+  const quick = Date.now() - swipe.at < 700;
+  swipe = null;
+  if (!quick || Math.abs(dx) < 70 || Math.abs(dx) < 2.5 * Math.abs(dy)) return;
+  if (dx < 0) goNext(); else goPrev();
+}, { passive: true });
 
 /** Vuelve arriba del todo, a los objetivos de la semana. */
 function scrollToGoals(smooth = true) {
   window.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
 }
 
-// ---------------------------------------------------------------- sincronización
+// ---------------------------------------------------------------- apariencia
 
-const syncBtn = $('#syncBtn');
-const syncText = $('#syncText');
+function savedTheme() {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    return t === 'light' || t === 'dark' ? t : 'system';
+  } catch { return 'system'; }
+}
+
+function applyTheme(theme) {
+  if (theme === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  // Color de la barra del navegador / del sistema.
+  const [lightMeta, darkMeta] = document.querySelectorAll('meta[name="theme-color"]');
+  const colors = { light: '#f6f5f1', dark: '#16171a' };
+  lightMeta.content = theme === 'dark' ? colors.dark : colors.light;
+  darkMeta.content = theme === 'light' ? colors.light : colors.dark;
+  for (const b of document.querySelectorAll('[data-theme-choice]')) {
+    b.setAttribute('aria-pressed', b.dataset.themeChoice === theme ? 'true' : 'false');
+  }
+}
+
+$('#themeChoice').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-theme-choice]');
+  if (!btn) return;
+  const theme = btn.dataset.themeChoice;
+  try {
+    if (theme === 'system') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, theme);
+  } catch { /* ignorar */ }
+  applyTheme(theme);
+});
+
+// ---------------------------------------------------------------- sincronización y ajustes
+
+const settingsBtn = $('#settingsBtn');
+const settingsDialog = $('#settingsDialog');
 const syncInfo = $('#syncInfo');
 let lastStatus = { state: 'off', detail: '' };
+let settledStatus = 'off'; // último estado que no es «sincronizando»
 
 const sync = new GistSync({
   getState: () => state,
   setState: (merged) => { state = merged; persist(); requestRender(); },
   onStatus: (s, detail = '') => {
     lastStatus = { state: s, detail };
-    syncBtn.dataset.state = s;
+    settingsBtn.dataset.state = s;
     const labels = {
       off: 'Sin sincronizar',
       syncing: 'Sincronizando…',
       ok: 'Sincronizado',
       offline: 'Sin conexión',
-      error: 'Error de sync',
+      error: 'Error al sincronizar',
     };
-    syncText.textContent = labels[s] || s;
-    syncBtn.title = detail || labels[s] || '';
-    if (syncDialog.open) refreshSyncDialog();
+    $('#syncText').textContent = labels[s] || s;
+    settingsBtn.title = detail || labels[s] || '';
+
+    // Avisar solo cuando el estado cambia (no en cada comprobación).
+    if (s !== 'syncing') {
+      if (!settingsDialog.open) {
+        if (s === 'offline' && settledStatus !== 'offline') {
+          toast('Sin conexión. Los cambios se guardan aquí y se subirán después.', { low: true, duration: 5000 });
+        } else if (s === 'error' && settledStatus !== 'error') {
+          toast(detail, { low: true, action: 'Ajustes', onAction: openSettings, duration: 8000 });
+        } else if (s === 'ok' && (settledStatus === 'offline' || settledStatus === 'error')) {
+          toast('Sincronizado de nuevo.', { low: true });
+        }
+      }
+      settledStatus = s;
+    }
+    if (settingsDialog.open) refreshSettings();
   },
 });
 
-const syncDialog = $('#syncDialog');
-
-function refreshSyncDialog() {
+function refreshSettings() {
   const connected = sync.configured;
   $('#disconnectBtn').hidden = !connected;
   $('#connectBtn').textContent = connected ? 'Sincronizar ahora' : 'Conectar';
-  $('#tokenInput').closest('.field').hidden = connected;
+  $('#syncSetup').hidden = connected;
   syncInfo.className = 'sync-info';
   if (!connected) { syncInfo.textContent = 'Ahora mismo los datos solo están en este dispositivo.'; return; }
   const { state: s, detail } = lastStatus;
@@ -434,11 +793,14 @@ function refreshSyncDialog() {
   }
 }
 
-syncBtn.addEventListener('click', () => {
+function openSettings() {
+  if (settingsDialog.open) return;
   $('#tokenInput').value = '';
-  refreshSyncDialog();
-  syncDialog.showModal();
-});
+  refreshSettings();
+  settingsDialog.showModal();
+}
+settingsBtn.addEventListener('click', openSettings);
+settingsDialog.addEventListener('close', () => { if (pendingRender) render(); });
 
 $('#connectBtn').addEventListener('click', async () => {
   const btn = $('#connectBtn');
@@ -449,7 +811,7 @@ $('#connectBtn').addEventListener('click', async () => {
   try {
     const login = await sync.connect($('#tokenInput').value);
     $('#tokenInput').value = '';
-    refreshSyncDialog();
+    refreshSettings();
     syncInfo.textContent = `Conectado como ${login}. Repite este paso en tus otros dispositivos.`;
   } catch (err) {
     syncInfo.className = 'sync-info error';
@@ -466,7 +828,8 @@ $('#connectBtn').addEventListener('click', async () => {
 $('#disconnectBtn').addEventListener('click', () => {
   if (!confirm('¿Desconectar este dispositivo? Los datos se quedan aquí y en GitHub, pero dejarán de sincronizarse.')) return;
   sync.disconnect();
-  refreshSyncDialog();
+  settledStatus = 'off';
+  refreshSettings();
 });
 
 $('#exportBtn').addEventListener('click', () => {
@@ -479,7 +842,7 @@ $('#exportBtn').addEventListener('click', () => {
 
 // Si otra pestaña del mismo navegador cambia los datos.
 window.addEventListener('storage', (e) => {
-  if (e.key === STORAGE_KEY) { state = load(); requestRender(); }
+  if (e.key === STORAGE_KEY) { state = prune(load()); requestRender(); }
 });
 
 // Al cambiar de día con la app abierta (p. ej. a medianoche), refrescar "Hoy".
@@ -493,10 +856,22 @@ setInterval(() => {
 
 // Al abrir, empezar siempre por los objetivos (sin recuperar el scroll anterior).
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+applyTheme(savedTheme());
 render();
 scrollToGoals(false);
 sync.start();
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
+// Service worker: abre al instante con la copia guardada y avisa si hay versión nueva.
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  let updateTimer = null;
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (!e.data || e.data.type !== 'update-available') return;
+    clearTimeout(updateTimer); // llegan varios avisos seguidos (uno por archivo)
+    updateTimer = setTimeout(() => {
+      toast('Hay una versión nueva de la app.', {
+        action: 'Recargar', onAction: () => location.reload(), duration: 20000, low: true,
+      });
+    }, 1500);
+  });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }

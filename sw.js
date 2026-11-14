@@ -1,7 +1,8 @@
-// Service worker: permite abrir la app sin conexión.
-// Estrategia "red primero": siempre intenta la versión más nueva y,
-// si no hay conexión, usa la copia guardada.
-const CACHE = 'planning-semanal-v1';
+// Service worker: la app se abre al instante y funciona sin conexión.
+// Estrategia: se responde con la copia guardada y, a la vez, se descarga la
+// versión nueva en segundo plano. Si algo ha cambiado, se avisa a la app
+// para que ofrezca recargar.
+const CACHE = 'planning-semanal-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -27,19 +28,35 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+const versionOf = (res) => res.headers.get('ETag') || res.headers.get('Last-Modified') || '';
+
+async function notifyUpdate() {
+  const clients = await self.clients.matchAll({ type: 'window' });
+  for (const client of clients) client.postMessage({ type: 'update-available' });
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   // Solo archivos propios de la app; las llamadas a GitHub pasan directas.
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
-  event.respondWith(
-    fetch(req)
-      .then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('index.html'))),
-  );
+
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    const cached = await cache.match(req, { ignoreSearch: true });
+
+    const refresh = fetch(req.url, { cache: 'no-cache' }).then(async (res) => {
+      if (!res.ok) return res;
+      const before = cached ? versionOf(cached) : '';
+      const after = versionOf(res);
+      await cache.put(req, res.clone());
+      if (before && after && before !== after) notifyUpdate();
+      return res;
+    });
+
+    if (cached) {
+      event.waitUntil(refresh.catch(() => {}));
+      return cached;
+    }
+    return refresh.catch(() => cache.match('index.html'));
+  })());
 });
