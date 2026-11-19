@@ -335,6 +335,8 @@ function render() {
   $('#weekActions').hidden = !nPending;
   $('#carryBtn').textContent = `Pasar ${plural(nPending, 'pendiente', 'pendientes')} a la semana siguiente →`;
 
+  renderExams();
+
   // Días
   $('#days').replaceChildren(...DAY_NAMES.map((name, day) => {
     const date = addDays(monday, day);
@@ -350,6 +352,78 @@ function render() {
     target?.focus();
   }
 }
+
+// ---------------------------------------------------------------- exámenes finales
+
+const liveExams = () => Object.values(state.exams).filter((x) => !x.deleted)
+  .sort((a, b) => a.date.localeCompare(b.date) || a.text.localeCompare(b.text));
+
+function daysUntil(dateKey) {
+  const t = new Date();
+  const today = new Date(t.getFullYear(), t.getMonth(), t.getDate());
+  return Math.round((dateOfKey(dateKey) - today) / 86_400_000);
+}
+
+const fmtExamDate = new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+
+function renderExams() {
+  const cards = liveExams().map((x) => {
+    const n = daysUntil(x.date);
+    const tone = n < 0 ? 'past' : n < 14 ? 'soon' : 'far';
+    const big = n < 0 ? '✓' : String(n);
+    const label = n < 0 ? 'Hecho' : n === 0 ? '¡Hoy!' : n === 1 ? 'día' : 'días';
+    return el('section', { class: `day exam ${tone}`, dataset: { id: x.id } },
+      el('header', { class: 'day-head' },
+        el('h2', {}, el('span', { class: 'day-name' }, x.text),
+          el('span', { class: 'day-date' }, fmtExamDate.format(dateOfKey(x.date)))),
+        el('button', {
+          type: 'button', class: 'exam-edit', title: 'Editar', 'aria-label': `Editar ${x.text}`,
+          onclick: () => openExamDialog(x.id),
+        }, '✎')),
+      el('div', { class: 'countdown', role: 'img', 'aria-label': n < 0 ? 'Examen hecho' : `Quedan ${plural(n, 'día', 'días')}` },
+        el('span', { class: 'countdown-num' }, big),
+        el('span', { class: 'countdown-label' }, label)));
+  });
+  cards.push(el('button', {
+    type: 'button', class: 'exam-add', 'aria-label': 'Añadir examen', onclick: () => openExamDialog(null),
+  }, el('span', { class: 'exam-add-plus' }, '+'), el('span', {}, 'Añadir examen')));
+  $('#exams').replaceChildren(...cards);
+}
+
+const examDialog = $('#examDialog');
+let editingExam = null; // id, o null si es nuevo
+
+function openExamDialog(id) {
+  const x = id ? state.exams[id] : null;
+  if (id && (!x || x.deleted)) return;
+  editingExam = id;
+  $('#examDialogTitle').textContent = x ? 'Editar examen' : 'Nuevo examen';
+  $('#examText').value = x ? x.text : '';
+  $('#examDate').value = x ? x.date : '';
+  $('#examDelete').hidden = !x;
+  examDialog.showModal();
+  if (matchMedia('(pointer: fine)').matches) $('#examText').focus();
+}
+
+examDialog.addEventListener('close', () => {
+  const action = examDialog.returnValue;
+  examDialog.returnValue = '';
+  const id = editingExam;
+  editingExam = null;
+  const text = $('#examText').value.trim();
+  const date = $('#examDate').value;
+  const x = id ? state.exams[id] : null;
+
+  if (action === 'delete' && x) {
+    x.deleted = true; x.text = ''; x.updatedAt = stamp(x.updatedAt);
+    commit();
+    toast('Examen eliminado.');
+  } else if (action === 'save' && text && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    if (x) { Object.assign(x, { text, date }); x.updatedAt = stamp(x.updatedAt); }
+    else { const nid = uid(); state.exams[nid] = { id: nid, text, date, updatedAt: stamp() }; }
+    commit();
+  } else if (pendingRender) render();
+});
 
 function renderProgress(tasks, goals) {
   const doneT = tasks.filter((t) => t.done).length;

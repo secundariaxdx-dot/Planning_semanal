@@ -83,6 +83,11 @@
     </div>
 
     <section class="days" id="days" aria-label="Días de la semana"></section>
+
+    <section class="exams" aria-labelledby="examsTitle">
+      <h2 id="examsTitle" class="exams-title">Exámenes finales</h2>
+      <div class="days exams-grid" id="exams"></div>
+    </section>
   </main>
 
   <!-- Aviso breve (deshacer, estado de la sincronización…) -->
@@ -110,6 +115,27 @@
       </div>
       <div class="dialog-actions">
         <button value="delete" class="btn danger" id="itemDelete" formnovalidate>Eliminar</button>
+        <span class="spacer"></span>
+        <button value="cancel" class="btn" formnovalidate>Cancelar</button>
+        <button value="save" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Añadir / editar examen -->
+  <dialog id="examDialog" class="sheet">
+    <form method="dialog" id="examForm">
+      <h2 id="examDialogTitle">Nuevo examen</h2>
+      <label class="field">
+        <span>Nombre</span>
+        <input id="examText" placeholder="Examen macro" required autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Fecha</span>
+        <input id="examDate" type="date" required>
+      </label>
+      <div class="dialog-actions">
+        <button value="delete" class="btn danger" id="examDelete" formnovalidate>Eliminar</button>
         <span class="spacer"></span>
         <button value="cancel" class="btn" formnovalidate>Cancelar</button>
         <button value="save" class="btn primary">Guardar</button>

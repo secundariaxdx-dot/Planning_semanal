@@ -12,6 +12,9 @@
 //   },
 //   rules: {                                // tareas que se repiten cada semana
 //     [id]: { id, text, days: [0-6…], from, until, order, updatedAt, deleted? }
+//   },
+//   exams: {                                // exámenes finales (no dependen de la semana)
+//     [id]: { id, text, date: "AAAA-MM-DD", updatedAt, deleted? }
 //   }
 // }
 //
@@ -27,7 +30,7 @@
 const WEEK_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const PRUNE_AFTER_MS = 60 * 24 * 60 * 60 * 1000; // 60 días
 
-export const emptyState = () => ({ version: 3, weeks: {}, rules: {} });
+export const emptyState = () => ({ version: 4, weeks: {}, rules: {}, exams: {} });
 export const emptyWeek = () => ({ tasks: {}, goals: {}, notes: { text: '', updatedAt: 0 } });
 
 const num = (v, fallback = 0) => (Number.isFinite(v) ? v : fallback);
@@ -84,6 +87,15 @@ export function normalizeState(raw) {
       state.rules[id] = rule;
     }
   }
+
+  if (raw.exams && typeof raw.exams === 'object') {
+    for (const [id, x] of Object.entries(raw.exams)) {
+      if (!x || typeof x !== 'object' || !WEEK_KEY.test(x.date)) continue;
+      const exam = { id, text: String(x.text ?? ''), date: x.date, updatedAt: num(x.updatedAt) };
+      if (x.deleted) exam.deleted = true;
+      state.exams[id] = exam;
+    }
+  }
   return state;
 }
 
@@ -130,6 +142,7 @@ export function merge(local, remote) {
   }
 
   mergeMap(local.rules, remote.rules, merged.rules);
+  mergeMap(local.exams, remote.exams, merged.exams);
   return { merged, ...flags };
 }
 
@@ -150,6 +163,9 @@ export function prune(state, now = Date.now()) {
     const empty = !Object.keys(w.tasks).length && !Object.keys(w.goals).length
       && w.notes.text === '' && w.notes.updatedAt < cutoff;
     if (empty) delete state.weeks[key];
+  }
+  for (const [id, x] of Object.entries(state.exams)) {
+    if (x.deleted && x.updatedAt < cutoff) delete state.exams[id];
   }
   return state;
 }

@@ -16,6 +16,12 @@
   --started: #e8790c;
   --started-soft: #fdebd6;
   --started-border: #f6c48f;
+  --exam-red: #d9534f;
+  --exam-red-soft: #f6dcda;
+  --exam-red-text: #7a1f1c;
+  --exam-yellow: #e9c63a;
+  --exam-yellow-soft: #fbf0c4;
+  --exam-yellow-text: #594700;
   --pending-bg: #d3f04a;
   --pending-text: #364400;
   --toast-bg: #26272b;
@@ -45,6 +51,12 @@
     --started: #f39a3d;
     --started-soft: #3a2713;
     --started-border: #6b4419;
+    --exam-red: #c4504b;
+    --exam-red-soft: #4a2423;
+    --exam-red-text: #f6c9c6;
+    --exam-yellow: #d6b53a;
+    --exam-yellow-soft: #3f361a;
+    --exam-yellow-text: #f3e2a0;
     --pending-bg: #c8e83c;
     --pending-text: #1f2800;
     --toast-bg: #ececef;
@@ -72,6 +84,12 @@
   --started: #f39a3d;
   --started-soft: #3a2713;
   --started-border: #6b4419;
+  --exam-red: #c4504b;
+  --exam-red-soft: #4a2423;
+  --exam-red-text: #f6c9c6;
+  --exam-yellow: #d6b53a;
+  --exam-yellow-soft: #3f361a;
+  --exam-yellow-text: #f3e2a0;
   --pending-bg: #c8e83c;
   --pending-text: #1f2800;
   --toast-bg: #ececef;
@@ -459,6 +477,35 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #goalList .item { padding-top: 9px; padding-bottom: 9px; }
   .check::before, .started-btn::before { inset: -12px -13px; }
 }
+
+/* ---------- Exámenes finales ---------- */
+.exams { display: grid; gap: 8px; }
+.exams-title { margin: 8px 4px 0; font-size: 15px; font-weight: 650; }
+.exam .day-head { align-items: flex-start; }
+.exam-edit {
+  flex: none; width: 28px; height: 28px; margin: -2px -2px 0 0; padding: 0;
+  border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: 15px;
+}
+.exam-edit:hover { background: var(--surface-2); color: var(--text); }
+.countdown {
+  display: flex; align-items: baseline; justify-content: center; gap: 8px;
+  padding: 14px 10px; margin-top: 4px; border-radius: 10px; font-weight: 650;
+}
+.countdown-num { font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
+.countdown-label { font-size: 14px; }
+.exam.far .countdown { background: var(--exam-yellow-soft); color: var(--exam-yellow-text); box-shadow: inset 0 0 0 1px var(--exam-yellow); }
+.exam.soon .countdown { background: var(--exam-red-soft); color: var(--exam-red-text); box-shadow: inset 0 0 0 1px var(--exam-red); }
+.exam.past { background: transparent; box-shadow: none; }
+.exam.past .day-name { color: var(--muted); }
+.exam.past .countdown { background: var(--surface-2); color: var(--muted); }
+.exam-add {
+  min-height: 112px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: 1.5px dashed var(--border); border-radius: var(--radius); background: none;
+  color: var(--muted); font-size: 13px; font-weight: 550;
+}
+.exam-add-plus { font-size: 26px; line-height: 1; color: var(--accent); }
+.exam-add:hover { background: var(--surface-2); }
+@media (max-width: 559px) { .exam-add { min-height: 56px; flex-direction: row; gap: 8px; } }
 
 /* ---------- Aviso (toast) ---------- */
 .toast {
