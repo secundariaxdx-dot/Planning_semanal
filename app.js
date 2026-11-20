@@ -846,7 +846,7 @@ function eventRow(ev, dateKey) {
 
 let lastEventFetch = 0;
 function refreshEvents(force = false) {
-  if (!gcal.connected || document.hidden) return;
+  if (!gcal.connected || document.hidden || gcal.status === 'reauth') return;
   if (!force && Date.now() - lastEventFetch < 20_000) return;
   lastEventFetch = Date.now();
   gcal.loadWeek(currentKey);
@@ -905,8 +905,14 @@ function syncEventForm() {
   $('#eventHint').textContent = bad ? 'El final debe ser posterior al inicio.' : '';
 }
 
+/** Identificador propio (base32hex, como pide Google): permite reintentar sin duplicar. */
+function newEventId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(26));
+  return [...bytes].map((b) => 'abcdefghijklmnopqrstuv0123456789'[b % 32]).join('');
+}
+
 function openEventDialog({ ev = null, dateKey = null, values = null }) {
-  editingEvent = { ev, dateKey };
+  editingEvent = { ev, dateKey, newId: values?.newId || newEventId() };
   const f = eventInputs;
   let v = values;
   if (!v && ev) {
@@ -941,16 +947,19 @@ for (const input of Object.values(eventInputs)) {
   });
 }
 const localTime = (key, time) => { const d = dateOfKey(key); const [h, m] = time.split(':').map(Number); d.setHours(h, m); return d; };
-eventInputs.title.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); if ($('#eventForm').reportValidity()) eventDialog.close('save'); }
-});
+// Intro en cualquier campo = guardar (si no, el navegador activaría «Eliminar», el primer botón).
+for (const input of [eventInputs.title, eventInputs.startDate, eventInputs.startTime, eventInputs.endDate, eventInputs.endTime]) {
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if ($('#eventForm').reportValidity()) eventDialog.close('save'); }
+  });
+}
 
 eventDialog.addEventListener('close', async () => {
   const action = eventDialog.returnValue;
   eventDialog.returnValue = '';
   const ed = editingEvent;
   editingEvent = null;
-  if (!ed || (action !== 'save' && action !== 'delete')) { if (pendingRender) render(); return; }
+  if (!ed || (action !== 'save' && action !== 'delete') || (action === 'delete' && !ed.ev)) { if (pendingRender) render(); return; }
 
   const f = eventInputs;
   const values = {
@@ -967,7 +976,7 @@ eventDialog.addEventListener('close', async () => {
     } else if (!ed.ev) {
       if (!values.title) return;
       toast('Creando en Google Calendar…', { duration: 15_000 });
-      await gcal.create({ title: values.title, schedule: values });
+      await gcal.create({ id: ed.newId, title: values.title, schedule: values });
       toast('Evento creado en Google Calendar.');
     } else {
       const orig = ed.ev;
@@ -987,7 +996,7 @@ eventDialog.addEventListener('close', async () => {
     toast(err.message || 'No se pudo completar el cambio en Google Calendar.', {
       duration: 9000,
       action: action === 'delete' ? '' : 'Reintentar',
-      onAction: () => openEventDialog({ ev: ed.ev, dateKey: ed.dateKey, values }),
+      onAction: () => openEventDialog({ ev: ed.ev, dateKey: ed.dateKey, values: { ...values, newId: ed.newId } }),
     });
     if (err.kind === 'gone') refreshEvents(true);
   }

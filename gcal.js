@@ -61,7 +61,11 @@ async function failFrom(res) {
   if (s === 403 && /rateLimit|quota/i.test(reason)) {
     return new GCalError('rate', 'Google pide ir más despacio. Inténtalo de nuevo en un momento.', s);
   }
-  if (s === 403) return new GCalError('perm', 'Google ha denegado el permiso. Desconecta y vuelve a conectar aceptando el acceso al calendario.', s);
+  if (s === 403 && /insufficient|PERMISSION_DENIED/i.test(reason + detail)) {
+    return new GCalError('perm', 'Google ha denegado el permiso. Desconecta y vuelve a conectar aceptando el acceso al calendario.', s);
+  }
+  if (s === 403) return new GCalError('denied', 'Google no permite cambiar este evento (quizá solo puede hacerlo su organizador).', s);
+  if (s === 409) return new GCalError('conflict', 'Ese evento ya existe en Google Calendar.', s);
   if (s === 404 || s === 410) return new GCalError('gone', 'Ese evento ya no existe en Google Calendar.', s);
   if (s === 429) return new GCalError('rate', 'Google pide ir más despacio. Inténtalo de nuevo en un momento.', s);
   return new GCalError('http', `Google Calendar respondió con un error (${s}).`, s);
@@ -141,6 +145,8 @@ export class GCal {
     this.state = this.connected ? (this.#tokenOk() ? 'ok' : 'reauth') : 'off';
     this.weeks = new Map(); // lunes (AAAA-MM-DD) → { at, events: Map id → evento }
     this.lastDetail = '';
+    this.gen = 0; // sube al desconectar: los resultados de peticiones antiguas se descartan
+    this.rev = 0; // sube con cada cambio propio: una carga anterior no lo pisa
     this.#loadCache();
   }
 
@@ -200,8 +206,9 @@ export class GCal {
     });
   }
 
-  async #acquire(prompt) {
+  async #acquire(prompt, gen = this.gen) {
     const r = await this.#requestToken(prompt);
+    if (gen !== this.gen) throw new GCalError('auth', 'Se desconectó mientras tanto.');
     this.token = r.access_token;
     this.expiresAt = Date.now() + (Number(r.expires_in) || 3600) * 1000;
     this.#save();
@@ -210,7 +217,7 @@ export class GCal {
   /** Abre la ventana de Google (hay que llamarlo desde un clic). */
   async connect() {
     if (!this.clientId) throw new GCalError('setup', 'Primero pega el Client ID de Google.');
-    await this.#acquire(this.connected ? '' : 'consent');
+    await this.#acquire(this.connected ? '' : 'consent', this.gen);
     this.connected = true;
     this.#save();
     this.#setState('ok');
@@ -219,6 +226,7 @@ export class GCal {
   disconnect() {
     const token = this.token;
     try { if (token && globalThis.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token, () => {}); } catch { /* ignorar */ }
+    this.gen++;
     this.token = '';
     this.expiresAt = 0;
     this.connected = false;
@@ -242,10 +250,17 @@ export class GCal {
 
   // ---------- peticiones
 
-  async #request(url, init = {}, retry = true) {
+  /** `interactive`: viene de una acción del usuario, así que puede abrir la ventana de Google. */
+  async #request(url, init = {}, interactive = false, retry = true) {
     if (!this.connected) throw new GCalError('auth', 'Google Calendar no está conectado.');
     if (!this.#tokenOk()) {
-      try { await this.#acquire(''); } catch (e) {
+      if (!interactive) {
+        const err = new GCalError('auth', 'La sesión de Google ha caducado. Pulsa «Reconectar».');
+        this.#setState('reauth', err.message);
+        throw err;
+      }
+      const gen = this.gen;
+      try { await this.#acquire('', gen); } catch (e) {
         if (e.kind !== 'offline') this.#setState('reauth', 'La sesión de Google ha caducado. Pulsa «Reconectar».');
         else this.#setState('offline', e.message);
         throw e;
@@ -265,7 +280,7 @@ export class GCal {
     if (res.ok) { this.#setState('ok'); return res; }
     if (res.status === 401 && retry) {
       this.token = ''; this.expiresAt = 0; this.#save();
-      return this.#request(url, init, false);
+      return this.#request(url, init, interactive, false);
     }
     const err = await failFrom(res);
     if (err.kind === 'auth') this.#setState('reauth', err.message);
@@ -278,6 +293,8 @@ export class GCal {
   /** Descarga los eventos de la semana que empieza el lunes `weekKey`. */
   async loadWeek(weekKey) {
     if (!this.connected) return false;
+    const gen = this.gen;
+    const rev = this.rev;
     const events = new Map();
     const timeMin = dateOfKey(weekKey).toISOString();
     const timeMax = addDays(dateOfKey(weekKey), 7).toISOString();
@@ -288,7 +305,7 @@ export class GCal {
           timeMin, timeMax, singleEvents: 'true', orderBy: 'startTime', maxResults: '250', showDeleted: 'false',
         });
         if (pageToken) q.set('pageToken', pageToken);
-        const res = await this.#request(`${API}?${q}`);
+        const res = await this.#request(`${API}?${q}`, {}, false);
         const data = await res.json();
         for (const item of data.items || []) {
           const ev = normalize(item);
@@ -301,6 +318,8 @@ export class GCal {
       if (e.kind === 'gone' || e.kind === 'http' || e.kind === 'rate') this.#setState('error', e.message);
       return false;
     }
+    // Si mientras tanto se desconectó o se cambió algo, esta copia ya es vieja.
+    if (gen !== this.gen || !this.connected || rev !== this.rev) return false;
     this.weeks.set(weekKey, { at: Date.now(), events });
     this.#saveCache();
     this.onChange();
@@ -323,30 +342,44 @@ export class GCal {
 
   /** f: { title, schedule: { allDay, startDate, startTime, endDate, endTime } } */
   async create(f) {
-    const res = await this.#request(API, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyFrom(f, false)),
-    });
-    this.#place(normalize(await res.json()));
+    const gen = this.gen;
+    // `f.id` lo genera la app una vez por evento: si se reintenta, Google responde «ya existe» en vez de duplicarlo.
+    const body = { ...(f.id ? { id: f.id } : {}), ...bodyFrom(f, false) };
+    let res;
+    try {
+      res = await this.#request(API, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      }, true);
+    } catch (e) {
+      if (e.kind === 'conflict') return; // ya se había creado
+      throw e;
+    }
+    const ev = normalize(await res.json());
+    if (gen === this.gen && this.connected) this.#place(ev);
   }
 
   /** f.title y/o f.schedule: solo se envía lo que ha cambiado. */
   async update(ev, f) {
+    const gen = this.gen;
     const res = await this.#request(`${API}/${encodeURIComponent(ev.id)}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyFrom(f, true)),
-    }).catch((e) => { if (e.kind === 'gone') this.#drop(ev.id); throw e; });
-    this.#place(normalize(await res.json()));
+    }, true).catch((e) => { if (e.kind === 'gone' && gen === this.gen) this.#drop(ev.id); throw e; });
+    const updated = normalize(await res.json());
+    if (gen === this.gen && this.connected) this.#place(updated);
   }
 
   async remove(ev) {
+    const gen = this.gen;
     try {
-      await this.#request(`${API}/${encodeURIComponent(ev.id)}`, { method: 'DELETE' });
+      await this.#request(`${API}/${encodeURIComponent(ev.id)}`, { method: 'DELETE' }, true);
     } catch (e) {
       if (e.kind !== 'gone') throw e; // si ya no existía, el resultado es el mismo
     }
-    this.#drop(ev.id);
+    if (gen === this.gen && this.connected) this.#drop(ev.id);
   }
 
   #drop(id) {
+    this.rev++;
     for (const w of this.weeks.values()) w.events.delete(id);
     this.#saveCache();
     this.onChange();
@@ -355,6 +388,7 @@ export class GCal {
   /** Pone el evento (sin duplicarlo) en todas las semanas guardadas que toca. */
   #place(ev) {
     if (!ev) return;
+    this.rev++;
     for (const [monday, w] of this.weeks) {
       w.events.delete(ev.id);
       const m0 = dateOfKey(monday);
