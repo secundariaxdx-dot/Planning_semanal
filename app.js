@@ -1,5 +1,6 @@
 import { emptyWeek, normalizeState, occId, parseOcc, prune, stamp, uid, weekTasks } from './store.js';
 import { GistSync } from './sync.js';
+import { GCal } from './gcal.js';
 
 const STORAGE_KEY = 'planning-semanal:data';
 const THEME_KEY = 'planning-semanal:theme';
@@ -312,6 +313,8 @@ function render() {
   const tasks = weekTasks(state, currentKey);
   const goals = live(w.goals);
 
+  $('#page').style.setProperty('--goals', goals.length);
+
   // Cabecera
   $('#weekLabel').textContent = weekRangeLabel(monday);
   $('#thisWeekTag').hidden = !isThisWeek;
@@ -336,6 +339,7 @@ function render() {
   $('#carryBtn').textContent = `Pasar ${plural(nPending, 'pendiente', 'pendientes')} a la semana siguiente →`;
 
   renderExams();
+  renderGcalChip();
 
   // Días
   $('#days').replaceChildren(...DAY_NAMES.map((name, day) => {
@@ -367,28 +371,35 @@ function daysUntil(dateKey) {
 const fmtExamDate = new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 
 function renderExams() {
-  const cards = liveExams().map((x) => {
+  const all = liveExams();
+  const upcoming = all.filter((x) => daysUntil(x.date) >= 0);
+  const past = all.filter((x) => daysUntil(x.date) < 0).reverse();
+  const cards = [...upcoming, ...past].map((x) => {
     const n = daysUntil(x.date);
     const tone = n < 0 ? 'past' : n < 14 ? 'soon' : 'far';
-    const big = n < 0 ? '✓' : String(n);
-    const label = n < 0 ? 'Hecho' : n === 0 ? '¡Hoy!' : n === 1 ? 'día' : 'días';
-    return el('section', { class: `day exam ${tone}`, dataset: { id: x.id } },
-      el('header', { class: 'day-head' },
-        el('h2', {}, el('span', { class: 'day-name' }, x.text),
-          el('span', { class: 'day-date' }, fmtExamDate.format(dateOfKey(x.date)))),
+    return el('section', { class: `exam ${tone}`, dataset: { id: x.id } },
+      el('div', { class: 'exam-info' },
+        el('h3', { class: 'exam-name' }, x.text),
+        el('p', { class: 'exam-date' }, fmtExamDate.format(dateOfKey(x.date))),
         el('button', {
           type: 'button', class: 'exam-edit', title: 'Editar', 'aria-label': `Editar ${x.text}`,
           onclick: () => openExamDialog(x.id),
         }, '✎')),
-      el('div', { class: 'countdown', role: 'img', 'aria-label': n < 0 ? 'Examen hecho' : `Quedan ${plural(n, 'día', 'días')}` },
-        el('span', { class: 'countdown-num' }, big),
-        el('span', { class: 'countdown-label' }, label)));
+      el('div', {
+        class: 'countdown', role: 'img',
+        'aria-label': n < 0 ? 'Examen hecho' : n === 0 ? 'El examen es hoy' : `Quedan ${plural(n, 'día', 'días')}`,
+      },
+        el('span', { class: 'countdown-num' }, n < 0 ? '✓' : n === 0 ? 'Hoy' : String(n)),
+        n > 0 ? el('span', { class: 'countdown-label' }, n === 1 ? 'día' : 'días') : null));
   });
-  cards.push(el('button', {
-    type: 'button', class: 'exam-add', 'aria-label': 'Añadir examen', onclick: () => openExamDialog(null),
-  }, el('span', { class: 'exam-add-plus' }, '+'), el('span', {}, 'Añadir examen')));
+  if (!cards.length) {
+    cards.push(el('button', { type: 'button', class: 'exam-empty', onclick: () => openExamDialog(null) },
+      'Aún no hay exámenes.', el('br'), 'Pulsa + para añadir el primero.'));
+  }
   $('#exams').replaceChildren(...cards);
 }
+
+$('#examAddBtn').addEventListener('click', () => openExamDialog(null));
 
 const examDialog = $('#examDialog');
 let editingExam = null; // id, o null si es nuevo
@@ -403,6 +414,13 @@ function openExamDialog(id) {
   $('#examDelete').hidden = !x;
   examDialog.showModal();
   if (matchMedia('(pointer: fine)').matches) $('#examText').focus();
+}
+
+// Intro en un campo = guardar (si no, el navegador activaría el primer botón: «Eliminar»).
+for (const id of ['#examText', '#examDate']) {
+  $(id).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if ($('#examForm').reportValidity()) examDialog.close('save'); }
+  });
 }
 
 examDialog.addEventListener('close', () => {
@@ -448,6 +466,11 @@ function dayCard({ name, day, date, list, isToday, isPast }) {
   const done = list.filter((t) => t.done).length;
   const ul = el('ul', { class: 'items', dataset: { day } }, list.map((t) => itemRow('tasks', t)));
   attachDrop(ul, day);
+  const dateKey = keyOf(date);
+  const events = gcal.connected ? gcal.eventsOn(dateKey) : [];
+  const evList = events.length
+    ? el('ul', { class: 'events', 'aria-label': 'Eventos de Google Calendar' }, events.map((e) => eventRow(e, dateKey)))
+    : null;
 
   const input = el('input', {
     name: 'text', placeholder: 'Añadir tarea…', 'aria-label': `Añadir tarea el ${name.toLowerCase()}`,
@@ -477,11 +500,17 @@ function dayCard({ name, day, date, list, isToday, isPast }) {
         el('span', { class: 'day-date' }, fmtDay.format(date)),
         isToday ? el('span', { class: 'today-tag' }, 'Hoy') : null),
       el('span', { class: 'count' }, list.length ? `${done}/${list.length}` : ''),
+      gcal.connected ? el('button', {
+        type: 'button', class: 'day-event', title: 'Nuevo evento en Google Calendar',
+        'aria-label': `Nuevo evento el ${name.toLowerCase()}`,
+        onclick: () => openEventDialog({ dateKey }),
+      }, calendarIcon()) : null,
       // En el móvil la caja de añadir está plegada y se abre con este botón.
       el('button', {
         type: 'button', class: 'day-add', 'aria-label': `Nueva tarea el ${name.toLowerCase()}`,
         onclick: () => { addingDay = day; section.classList.add('adding'); input.focus(); },
       }, '+')),
+    evList,
     ul,
     form);
 
@@ -728,6 +757,7 @@ function goToWeek(key, dir = null) {
   addingDay = null;
   currentKey = key;
   render();
+  refreshEvents(true);
   page.classList.remove('slide-left', 'slide-right');
   if (dir) {
     void page.offsetWidth;
@@ -777,6 +807,191 @@ page.addEventListener('touchend', (e) => {
 function scrollToGoals(smooth = true) {
   window.scrollTo({ top: 0, behavior: smooth ? 'smooth' : 'auto' });
 }
+
+// ---------------------------------------------------------------- Google Calendar
+
+const gcal = new GCal({
+  onChange: () => requestRender(),
+  onStatus: (s, detail) => {
+    renderGcalChip();
+    if (settingsDialog.open) refreshGcalSettings();
+    else if ((s === 'reauth' || s === 'error') && detail) toast(detail, { low: true, duration: 6000 });
+  },
+});
+
+const calendarIcon = () => {
+  const span = el('span', { class: 'cal-icon', 'aria-hidden': 'true' });
+  span.innerHTML = '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18M12 13v5M9.5 15.5h5"/></svg>';
+  return span;
+};
+
+const fmtHour = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+function eventRow(ev, dateKey) {
+  const day0 = dateOfKey(dateKey);
+  let when;
+  if (ev.allDay) when = 'Todo el día';
+  else if (ev.start >= day0) when = `${fmtHour.format(ev.start)}–${fmtHour.format(ev.end)}`;
+  else when = 'Continúa';
+  const ended = ev.end <= new Date();
+  return el('li', { class: `event${ev.allDay ? ' all-day' : ''}${ended ? ' ended' : ''}` },
+    el('button', {
+      type: 'button', class: 'event-body', title: `${ev.title} (Google Calendar)`,
+      onclick: () => openEventDialog({ ev }),
+    },
+      el('span', { class: 'event-time' }, when),
+      el('span', { class: 'event-title' }, ev.title,
+        ev.recurring ? el('span', { class: 'repeat-mark', title: 'Evento que se repite' }, '↻') : null)));
+}
+
+let lastEventFetch = 0;
+function refreshEvents(force = false) {
+  if (!gcal.connected || document.hidden) return;
+  if (!force && Date.now() - lastEventFetch < 20_000) return;
+  lastEventFetch = Date.now();
+  gcal.loadWeek(currentKey);
+}
+setInterval(() => refreshEvents(false), 60_000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshEvents(false); });
+window.addEventListener('online', () => refreshEvents(true));
+
+const CHIP_TEXT = {
+  off: 'Conectar Google Calendar',
+  idle: 'Conectar Google Calendar',
+  ok: 'Google Calendar',
+  reauth: 'Reconectar Google',
+  offline: 'Google sin conexión',
+  error: 'Google: revisar',
+};
+function renderGcalChip() {
+  const chip = $('#gcalChip');
+  const s = gcal.status;
+  chip.dataset.state = s;
+  chip.textContent = CHIP_TEXT[s] || '';
+  chip.title = s === 'ok' ? 'Conectado. Pulsa para actualizar ahora.' : gcal.lastDetail || CHIP_TEXT[s];
+}
+
+$('#gcalChip').addEventListener('click', async () => {
+  const s = gcal.status;
+  if (s === 'off' || s === 'idle' || s === 'error') return openSettings();
+  if (s === 'reauth') {
+    try { await gcal.connect(); refreshEvents(true); } catch (e) { toast(e.message, { duration: 6000 }); }
+    return;
+  }
+  refreshEvents(true);
+  toast('Actualizando eventos…', { low: true, duration: 1500 });
+});
+
+// ---------- diálogo de evento
+
+const eventDialog = $('#eventDialog');
+let editingEvent = null; // { ev } si existe, { dateKey } si es nuevo
+const eventInputs = {
+  title: $('#eventTitle'), allDay: $('#eventAllDay'),
+  startDate: $('#eventStartDate'), startTime: $('#eventStartTime'),
+  endDate: $('#eventEndDate'), endTime: $('#eventEndTime'),
+};
+const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+function syncEventForm() {
+  const f = eventInputs;
+  const allDay = f.allDay.checked;
+  $('#eventStartTimeWrap').hidden = $('#eventEndTimeWrap').hidden = allDay;
+  f.startTime.required = f.endTime.required = !allDay;
+  const bad = f.startDate.value && f.endDate.value && (allDay
+    ? f.endDate.value < f.startDate.value
+    : `${f.endDate.value}T${f.endTime.value}` <= `${f.startDate.value}T${f.startTime.value}`);
+  f.endDate.setCustomValidity(bad ? 'El final debe ser posterior al inicio.' : '');
+  $('#eventHint').textContent = bad ? 'El final debe ser posterior al inicio.' : '';
+}
+
+function openEventDialog({ ev = null, dateKey = null, values = null }) {
+  editingEvent = { ev, dateKey };
+  const f = eventInputs;
+  let v = values;
+  if (!v && ev) {
+    v = ev.allDay
+      ? { title: ev.title, allDay: true, startDate: keyOf(ev.start), startTime: '09:00', endDate: keyOf(addDays(ev.end, -1)), endTime: '10:00' }
+      : { title: ev.title, allDay: false, startDate: keyOf(ev.start), startTime: hhmm(ev.start), endDate: keyOf(ev.end), endTime: hhmm(ev.end) };
+  }
+  v = v || { title: '', allDay: false, startDate: dateKey, startTime: '09:00', endDate: dateKey, endTime: '10:00' };
+  f.title.value = v.title; f.allDay.checked = v.allDay;
+  f.startDate.value = v.startDate; f.startTime.value = v.startTime;
+  f.endDate.value = v.endDate; f.endTime.value = v.endTime;
+  $('#eventDialogTitle').textContent = ev ? 'Editar evento' : 'Nuevo evento';
+  $('#eventDelete').hidden = !ev;
+  syncEventForm();
+  $('#eventHint').textContent = ev?.recurring ? 'Evento que se repite: los cambios solo afectan a esta repetición.'
+    : 'Se guarda en tu Google Calendar principal.';
+  eventDialog.showModal();
+  if (matchMedia('(pointer: fine)').matches) f.title.focus();
+}
+
+for (const input of Object.values(eventInputs)) {
+  input.addEventListener('change', () => {
+    const f = eventInputs;
+    if (input === f.startDate && f.endDate.value < f.startDate.value) f.endDate.value = f.startDate.value;
+    if ((input === f.startTime || input === f.startDate) && !f.allDay.checked
+      && f.startDate.value === f.endDate.value && f.startTime.value && f.endTime.value <= f.startTime.value) {
+      const d = localTime(f.startDate.value, f.startTime.value);
+      d.setHours(d.getHours() + 1);
+      if (keyOf(d) === f.startDate.value) f.endTime.value = hhmm(d);
+    }
+    syncEventForm();
+  });
+}
+const localTime = (key, time) => { const d = dateOfKey(key); const [h, m] = time.split(':').map(Number); d.setHours(h, m); return d; };
+eventInputs.title.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); if ($('#eventForm').reportValidity()) eventDialog.close('save'); }
+});
+
+eventDialog.addEventListener('close', async () => {
+  const action = eventDialog.returnValue;
+  eventDialog.returnValue = '';
+  const ed = editingEvent;
+  editingEvent = null;
+  if (!ed || (action !== 'save' && action !== 'delete')) { if (pendingRender) render(); return; }
+
+  const f = eventInputs;
+  const values = {
+    title: f.title.value.trim(), allDay: f.allDay.checked,
+    startDate: f.startDate.value, startTime: f.startTime.value || '09:00',
+    endDate: f.endDate.value, endTime: f.endTime.value || '10:00',
+  };
+  try {
+    if (action === 'delete') {
+      if (!confirm(`¿Eliminar «${ed.ev.title}» de Google Calendar?${ed.ev.recurring ? ' Solo se elimina esta repetición.' : ''}`)) return;
+      toast('Eliminando de Google Calendar…', { duration: 15_000 });
+      await gcal.remove(ed.ev);
+      toast('Evento eliminado de Google Calendar.');
+    } else if (!ed.ev) {
+      if (!values.title) return;
+      toast('Creando en Google Calendar…', { duration: 15_000 });
+      await gcal.create({ title: values.title, schedule: values });
+      toast('Evento creado en Google Calendar.');
+    } else {
+      const orig = ed.ev;
+      const same = orig.allDay === values.allDay && keyOf(orig.start) === values.startDate
+        && (values.allDay ? keyOf(addDays(orig.end, -1)) === values.endDate
+          : hhmm(orig.start) === values.startTime && keyOf(orig.end) === values.endDate && hhmm(orig.end) === values.endTime);
+      const patch = {};
+      if (values.title && values.title !== orig.title) patch.title = values.title;
+      if (!same) patch.schedule = values;
+      if (!Object.keys(patch).length) return;
+      toast('Guardando en Google Calendar…', { duration: 15_000 });
+      await gcal.update(orig, patch);
+      toast('Evento actualizado en Google Calendar.');
+    }
+    refreshEvents(true);
+  } catch (err) {
+    toast(err.message || 'No se pudo completar el cambio en Google Calendar.', {
+      duration: 9000,
+      action: action === 'delete' ? '' : 'Reintentar',
+      onAction: () => openEventDialog({ ev: ed.ev, dateKey: ed.dateKey, values }),
+    });
+    if (err.kind === 'gone') refreshEvents(true);
+  }
+});
 
 // ---------------------------------------------------------------- apariencia
 
@@ -867,9 +1082,25 @@ function refreshSettings() {
   }
 }
 
+function refreshGcalSettings() {
+  const s = gcal.status;
+  const info = $('#gcalInfo');
+  info.className = 'sync-info';
+  $('#gcalSetup').hidden = gcal.connected;
+  $('#gcalDisconnect').hidden = !gcal.connected;
+  $('#gcalConnect').textContent = s === 'reauth' ? 'Reconectar' : gcal.connected ? 'Actualizar ahora' : 'Conectar con Google';
+  if (!gcal.connected) {
+    info.textContent = s === 'idle' ? 'Client ID guardado. Pulsa «Conectar con Google».' : 'Google Calendar no está conectado.';
+  } else if (s === 'ok') { info.classList.add('ok'); info.textContent = 'Conectado a Google Calendar.'; }
+  else { info.classList.add('error'); info.textContent = gcal.lastDetail || 'Hay un problema con Google Calendar.'; }
+}
+
 function openSettings() {
   if (settingsDialog.open) return;
   $('#tokenInput').value = '';
+  $('#gcalOrigin').textContent = location.origin;
+  $('#gcalClientId').value = gcal.clientId;
+  refreshGcalSettings();
   refreshSettings();
   settingsDialog.showModal();
 }
@@ -897,6 +1128,44 @@ $('#connectBtn').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
   }
+});
+
+$('#gcalConnect').addEventListener('click', async () => {
+  const btn = $('#gcalConnect');
+  const info = $('#gcalInfo');
+  if (gcal.connected) {
+    if (gcal.status === 'reauth') { try { await gcal.connect(); } catch (e) { info.className = 'sync-info error'; info.textContent = e.message; return; } }
+    refreshEvents(true); refreshGcalSettings(); return;
+  }
+  const typed = $('#gcalClientId').value.trim();
+  if (typed && !gcal.setClientId(typed)) {
+    info.className = 'sync-info error';
+    info.textContent = 'Ese Client ID no parece válido. Debe terminar en .apps.googleusercontent.com.';
+    return;
+  }
+  if (!gcal.clientId) { info.className = 'sync-info error'; info.textContent = 'Pega primero el Client ID de Google.'; return; }
+  btn.disabled = true;
+  info.className = 'sync-info';
+  info.textContent = 'Abriendo la ventana de Google…';
+  try {
+    await gcal.connect();
+    refreshEvents(true);
+    render();
+  } catch (e) {
+    info.className = 'sync-info error';
+    info.textContent = e.message;
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+  refreshGcalSettings();
+});
+
+$('#gcalDisconnect').addEventListener('click', () => {
+  if (!confirm('¿Desconectar Google Calendar? Tus eventos de Google no se borran; solo dejan de verse aquí.')) return;
+  gcal.disconnect();
+  render();
+  refreshGcalSettings();
 });
 
 $('#disconnectBtn').addEventListener('click', () => {
@@ -934,6 +1203,7 @@ applyTheme(savedTheme());
 render();
 scrollToGoals(false);
 sync.start();
+refreshEvents(true);
 
 // Service worker: abre al instante con la copia guardada y avisa si hay versión nueva.
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

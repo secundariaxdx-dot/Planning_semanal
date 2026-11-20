@@ -41,6 +41,28 @@ Si dos dispositivos cambian cosas distintas a la vez, se conservan los dos cambi
 
 Cuando hay una versión nueva de la app, aparece el aviso «Hay una versión nueva» con el botón **Recargar**.
 
+## 3. Conectar Google Calendar (opcional)
+
+La app puede mostrar los eventos de tu Google Calendar principal dentro de cada día de la agenda y crearlos, editarlos y borrarlos desde aquí. Los eventos viven solo en Google (no se copian al Gist), así que no se duplican.
+
+**Lo haces una sola vez** (lleva unos 10 minutos). En la app: ruedecita → Ajustes → *Google Calendar* → «Cómo conseguir el Client ID». Los pasos son:
+
+1. Crea un proyecto en <https://console.cloud.google.com/projectcreate> (por ejemplo «Planning semanal»).
+2. Activa la **API de Google Calendar** en ese proyecto.
+3. En *Google Auth Platform* configura la pantalla de consentimiento: público **Externo**, tu correo, y añade tu correo como **usuario de prueba**. En *Acceso a los datos* añade el permiso `.../auth/calendar.events`.
+4. Crea un **cliente OAuth de tipo «Aplicación web»** con el origen de JavaScript autorizado `https://secundariaxdx-dot.github.io` (sin barra final ni ruta).
+5. Copia el **ID de cliente** (`...apps.googleusercontent.com`), pégalo en Ajustes y pulsa **Conectar con Google**. Google avisará de que la app no está verificada: es la tuya, pulsa «Configuración avanzada» → «Ir a Planning semanal».
+
+Cosas que conviene saber:
+
+- **Cada hora** Google caduca el permiso (no hay servidor que lo renueve). Cuando pase, el botón junto a «Agenda» pone **Reconectar Google**; un clic y listo. Tus datos no se pierden.
+- **Cambios hechos en Google:** la app los recoge al abrir la semana, al volver a la pestaña y cada minuto. Pulsar el botón «Google Calendar» fuerza la actualización.
+- **Sin conexión** se ven los últimos eventos descargados, pero no se pueden crear ni editar hasta recuperar la conexión.
+- **Eventos que se repiten:** al editar o borrar uno, el cambio afecta solo a esa repetición.
+- **Todo el día y horas:** los eventos de día completo salen arriba, en color sólido; los demás con su hora, en tu zona horaria. Los eventos de varios días aparecen en cada día.
+- **Desconectar** (Ajustes → Desconectar Google) revoca el permiso y borra la copia local; tus eventos de Google no se tocan.
+- Solo se usa el calendario principal.
+
 ## Cómo funcionan algunas cosas
 
 - **Tareas repetidas.** Los cambios de días valen desde la semana que estás viendo; las semanas anteriores no cambian. «Quitar esta semana» la quita solo de esa semana. Para dejar de repetirla, desmarca todos los días. Las tareas repetidas no se pasan como pendientes, porque vuelven a aparecer solas.
@@ -49,6 +71,7 @@ Cuando hay una versión nueva de la app, aparece el aviso «Hay una versión nue
 
 ## Privacidad
 
+- El Client ID y el permiso temporal de Google (1 hora) se guardan solo en el navegador de cada dispositivo. El permiso permite ver y editar eventos de tu calendario.
 - El token se guarda solo en el navegador de cada dispositivo y únicamente da acceso a tus gists.
 - Un gist «secreto» no aparece en tu perfil ni en buscadores, pero **cualquiera que tenga su enlace puede leerlo**. No guardes en la app nada muy sensible.
 - Si pierdes un dispositivo, borra el token en <https://github.com/settings/tokens>.
@@ -63,4 +86,5 @@ Cuando hay una versión nueva de la app, aparece el aviso «Hay una versión nue
 | `app.js` | Interfaz y lógica de la app |
 | `store.js` | Modelo de datos, tareas repetidas y fusión de cambios entre dispositivos |
 | `sync.js` | Sincronización con GitHub Gist |
+| `gcal.js` | Conexión con Google Calendar (inicio de sesión, leer, crear, editar y borrar eventos) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Uso sin conexión e instalación como app |

@@ -57,37 +57,48 @@
   </header>
 
   <main class="page" id="page">
-    <section class="overview">
-      <article class="card">
-        <header class="card-head">
-          <h2>Objetivos de la semana</h2>
-          <span class="count" id="goalCount"></span>
-        </header>
-        <ul class="items" id="goalList"></ul>
-        <form class="add-form" id="goalForm" autocomplete="off">
-          <input name="text" id="goalInput" placeholder="Añadir objetivo…" aria-label="Añadir objetivo" enterkeyhint="done">
-          <button class="add-btn" aria-label="Añadir objetivo">+</button>
-        </form>
-      </article>
-      <article class="card">
-        <header class="card-head">
-          <h2><label for="notes">Notas</label></h2>
-          <span class="count" id="notesState"></span>
-        </header>
-        <textarea id="notes" class="notes" placeholder="Ideas, recordatorios, lo que quieras para esta semana…"></textarea>
-      </article>
-    </section>
+    <div class="main-left">
+      <section class="overview">
+        <article class="card">
+          <header class="card-head">
+            <h2>Objetivos de la semana</h2>
+            <span class="count" id="goalCount"></span>
+          </header>
+          <ul class="items" id="goalList"></ul>
+          <form class="add-form" id="goalForm" autocomplete="off">
+            <input name="text" id="goalInput" placeholder="Añadir objetivo…" aria-label="Añadir objetivo" enterkeyhint="done">
+            <button class="add-btn" aria-label="Añadir objetivo">+</button>
+          </form>
+        </article>
+        <article class="card">
+          <header class="card-head">
+            <h2><label for="notes">Notas</label></h2>
+            <span class="count" id="notesState"></span>
+          </header>
+          <textarea id="notes" class="notes" placeholder="Ideas, recordatorios, lo que quieras para esta semana…"></textarea>
+        </article>
+      </section>
 
-    <div class="week-actions" id="weekActions" hidden>
-      <button type="button" class="carry-btn" id="carryBtn"></button>
+      <section class="agenda" aria-labelledby="agendaTitle">
+        <header class="agenda-head">
+          <h2 id="agendaTitle">Agenda</h2>
+          <span class="spacer"></span>
+          <div class="week-actions" id="weekActions" hidden>
+            <button type="button" class="carry-btn" id="carryBtn"></button>
+          </div>
+          <button type="button" class="gcal-chip" id="gcalChip" data-state="off"></button>
+        </header>
+        <div class="days" id="days" aria-label="Días de la semana"></div>
+      </section>
     </div>
 
-    <section class="days" id="days" aria-label="Días de la semana"></section>
-
-    <section class="exams" aria-labelledby="examsTitle">
-      <h2 id="examsTitle" class="exams-title">Exámenes finales</h2>
-      <div class="days exams-grid" id="exams"></div>
-    </section>
+    <aside class="exams-col" aria-labelledby="examsTitle">
+      <header class="exams-head">
+        <h2 id="examsTitle">Exámenes</h2>
+        <button type="button" class="add-btn" id="examAddBtn" aria-label="Añadir examen" title="Añadir examen">+</button>
+      </header>
+      <div class="exams-list" id="exams"></div>
+    </aside>
   </main>
 
   <!-- Aviso breve (deshacer, estado de la sincronización…) -->
@@ -143,6 +154,33 @@
     </form>
   </dialog>
 
+  <!-- Evento de Google Calendar -->
+  <dialog id="eventDialog" class="sheet">
+    <form method="dialog" id="eventForm">
+      <h2 id="eventDialogTitle">Nuevo evento</h2>
+      <label class="field">
+        <span>Título</span>
+        <input id="eventTitle" required autocomplete="off" placeholder="Reunión, clase, cita…">
+      </label>
+      <label class="check-row"><input type="checkbox" id="eventAllDay"> <span>Todo el día</span></label>
+      <div class="field-row">
+        <label class="field"><span>Desde</span><input type="date" id="eventStartDate" required></label>
+        <label class="field" id="eventStartTimeWrap"><span>Hora</span><input type="time" id="eventStartTime"></label>
+      </div>
+      <div class="field-row">
+        <label class="field"><span>Hasta</span><input type="date" id="eventEndDate" required></label>
+        <label class="field" id="eventEndTimeWrap"><span>Hora</span><input type="time" id="eventEndTime"></label>
+      </div>
+      <p class="option-hint" id="eventHint"></p>
+      <div class="dialog-actions">
+        <button value="delete" class="btn danger" id="eventDelete" formnovalidate>Eliminar</button>
+        <span class="spacer"></span>
+        <button value="cancel" class="btn" formnovalidate>Cancelar</button>
+        <button value="save" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Ajustes: apariencia y sincronización -->
   <dialog id="settingsDialog" class="sheet">
     <form method="dialog" id="settingsForm">
@@ -155,6 +193,32 @@
           <button type="button" data-theme-choice="light">Claro</button>
           <button type="button" data-theme-choice="dark">Oscuro</button>
         </div>
+      </div>
+
+      <h3>Google Calendar</h3>
+      <div id="gcalSetup">
+        <p class="hint">Para ver y editar tus eventos de Google aquí, necesitas crear una vez una «aplicación» gratuita en Google Cloud y pegar su <strong>Client ID</strong>.</p>
+        <details class="steps-box">
+          <summary>Cómo conseguir el Client ID (5 pasos)</summary>
+          <ol class="steps">
+            <li>Entra en <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud</a> y crea un proyecto llamado «Planning semanal».</li>
+            <li>Activa la <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">API de Google Calendar</a> (botón «Habilitar»).</li>
+            <li>En <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener">Google Auth Platform</a> pulsa «Comenzar»: nombre de la app «Planning semanal», tu correo, público «Externo». Luego, en «Público», añade tu correo de Google como <em>usuario de prueba</em>, y en «Acceso a los datos» añade el permiso <code>.../auth/calendar.events</code>.</li>
+            <li>En <a href="https://console.cloud.google.com/auth/clients/create" target="_blank" rel="noopener">Clientes → Crear cliente</a> elige «Aplicación web» y, en «Orígenes de JavaScript autorizados», escribe exactamente <code id="gcalOrigin"></code> (sin barra final).</li>
+            <li>Copia el «ID de cliente» (termina en <code>.apps.googleusercontent.com</code>) y pégalo aquí debajo.</li>
+          </ol>
+          <p class="option-hint">Al conectar, Google avisará de que la app «no está verificada»: es la tuya, pulsa «Configuración avanzada» → «Ir a Planning semanal».</p>
+        </details>
+        <label class="field">
+          <span>Client ID de Google</span>
+          <input id="gcalClientId" autocomplete="off" spellcheck="false" placeholder="123456-abc.apps.googleusercontent.com">
+        </label>
+      </div>
+      <p class="sync-info" id="gcalInfo" role="status"></p>
+      <div class="dialog-actions gcal-actions">
+        <button type="button" class="btn danger" id="gcalDisconnect">Desconectar Google</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn primary" id="gcalConnect">Conectar con Google</button>
       </div>
 
       <h3>Sincronizar dispositivos</h3>
