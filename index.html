@@ -72,10 +72,20 @@
         </article>
         <article class="card">
           <header class="card-head">
-            <h2><label for="notes">Notas</label></h2>
+            <h2 id="notesTitle">Notas</h2>
             <span class="count" id="notesState"></span>
           </header>
-          <textarea id="notes" class="notes" placeholder="Ideas, recordatorios, lo que quieras para esta semana…"></textarea>
+          <div class="notes-bar" id="notesBar" role="toolbar" aria-label="Formato de las notas">
+            <button type="button" data-cmd="title" aria-pressed="false" title="Título" aria-label="Título"><span class="nb-h">T</span></button>
+            <button type="button" data-cmd="bold" aria-pressed="false" title="Negrita (Ctrl+B)" aria-label="Negrita"><b>B</b></button>
+            <button type="button" data-cmd="italic" aria-pressed="false" title="Cursiva (Ctrl+I)" aria-label="Cursiva"><i>I</i></button>
+            <button type="button" data-cmd="strike" aria-pressed="false" title="Tachado" aria-label="Tachado"><s>S</s></button>
+            <span class="nb-sep" aria-hidden="true"></span>
+            <button type="button" data-cmd="bullet" aria-pressed="false" title="Lista con viñetas" aria-label="Lista con viñetas"><span class="nb-ic">•≡</span></button>
+            <button type="button" data-cmd="check" aria-pressed="false" title="Lista de tareas (casillas que se tachan)" aria-label="Lista de tareas"><span class="nb-ic">☑</span></button>
+            <button type="button" data-cmd="fold" aria-pressed="false" title="Sección desplegable" aria-label="Sección desplegable"><span class="nb-ic">▸</span> <span class="nb-txt">Desplegable</span></button>
+          </div>
+          <div id="notes" class="notes editor is-empty" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="notesTitle" spellcheck="true" data-placeholder="Ideas, recordatorios, lo que quieras para esta semana…"></div>
         </article>
       </section>
 

@@ -1,6 +1,7 @@
 import { emptyWeek, normalizeState, occId, parseOcc, prune, stamp, uid, weekTasks } from './store.js';
 import { GistSync } from './sync.js';
 import { GCal } from './gcal.js';
+import { NoteEditor, notesToHtml } from './notes.js';
 
 const STORAGE_KEY = 'planning-semanal:data';
 const THEME_KEY = 'planning-semanal:theme';
@@ -329,7 +330,7 @@ function render() {
 
   // Notas (no pisar lo que se está escribiendo)
   const notes = $('#notes');
-  if (document.activeElement !== notes) notes.value = w.notes.text;
+  if (!notes.contains(document.activeElement)) noteEditor.setHtml(notesToHtml(w.notes));
   $('#notesState').textContent = '';
 
   // Pasar pendientes
@@ -719,30 +720,36 @@ $('#goalForm').addEventListener('submit', (e) => {
 $('#carryBtn').addEventListener('click', carryOver);
 
 let notesTimer = null;
-function saveNotes(key, value) {
+function saveNotes(key, { html, text }) {
   const w = week(key);
-  if (value === w.notes.text) return;
-  w.notes = { text: value, updatedAt: stamp(w.notes.updatedAt) };
+  if (text === w.notes.text && html === (w.notes.html || '')) return;
+  w.notes = { text, updatedAt: stamp(w.notes.updatedAt), ...(html ? { html } : {}) };
   persist();
   sync.schedule();
 }
-$('#notes').addEventListener('input', (e) => {
-  const key = currentKey;
-  const value = e.target.value;
-  $('#notesState').textContent = 'Guardando…';
+function flushNotes() {
+  if (!notesTimer) return;
   clearTimeout(notesTimer);
-  notesTimer = setTimeout(() => {
-    notesTimer = null;
-    saveNotes(key, value);
-    $('#notesState').textContent = 'Guardado';
-  }, 400);
+  notesTimer = null;
+  saveNotes(notesKey, noteEditor.content());
+}
+let notesKey = currentKey;
+const noteEditor = new NoteEditor($('#notes'), $('#notesBar'), {
+  onChange: () => {
+    if (!notesTimer) notesKey = currentKey; // la nota pertenece a la semana en la que se empezó a escribir
+    $('#notesState').textContent = 'Guardando…';
+    clearTimeout(notesTimer);
+    notesTimer = setTimeout(() => {
+      notesTimer = null;
+      saveNotes(notesKey, noteEditor.content());
+      $('#notesState').textContent = 'Guardado';
+    }, 400);
+  },
 });
 $('#notes').addEventListener('blur', () => {
   // Guardar al instante si quedaba algo pendiente.
   if (!notesTimer) return;
-  clearTimeout(notesTimer);
-  notesTimer = null;
-  saveNotes(currentKey, $('#notes').value);
+  flushNotes();
   $('#notesState').textContent = '';
 });
 
@@ -753,6 +760,7 @@ const page = $('#page');
 /** `dir`: 'next' | 'prev' para animar el cambio. */
 function goToWeek(key, dir = null) {
   if (key === currentKey) return;
+  flushNotes();
   $('#notes').blur();
   addingDay = null;
   currentKey = key;
@@ -776,7 +784,7 @@ $('#todayBtn').addEventListener('click', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.matches('input, textarea') || document.querySelector('dialog[open]')) return;
+  if (e.target.closest('input, textarea, [contenteditable]') || document.querySelector('dialog[open]')) return;
   if (e.key === 'ArrowLeft') goPrev();
   if (e.key === 'ArrowRight') goNext();
 });
@@ -786,7 +794,7 @@ let swipe = null;
 page.addEventListener('touchstart', (e) => {
   const t = e.touches[0];
   const edge = 24; // los bordes se dejan para los gestos del navegador
-  swipe = (e.touches.length === 1 && !e.target.closest('input, textarea')
+  swipe = (e.touches.length === 1 && !e.target.closest('input, textarea, [contenteditable]')
     && t.clientX > edge && t.clientX < innerWidth - edge)
     ? { x: t.clientX, y: t.clientY, at: Date.now() } : null;
 }, { passive: true });

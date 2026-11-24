@@ -63,6 +63,10 @@ Cosas que conviene saber:
 - **Desconectar** (Ajustes → Desconectar Google) revoca el permiso y borra la copia local; tus eventos de Google no se tocan.
 - Solo se usa el calendario principal.
 
+## Notas con formato
+
+El apartado **Notas** funciona como las notas de Apple. La barra de arriba tiene: **T** título, **B** negrita, *I* cursiva, ~~S~~ tachado, **•≡** lista, **☑** lista de tareas (pulsa la casilla y el elemento se tacha) y **▸ Desplegable** (una sección que se pliega pulsando su flecha). Atajos al empezar una línea: `- ` crea una lista, `[] ` una lista de tareas y `# ` un título. Las notas antiguas (solo texto) se conservan tal cual.
+
 ## Cómo funcionan algunas cosas
 
 - **Tareas repetidas.** Los cambios de días valen desde la semana que estás viendo; las semanas anteriores no cambian. «Quitar esta semana» la quita solo de esa semana. Para dejar de repetirla, desmarca todos los días. Las tareas repetidas no se pasan como pendientes, porque vuelven a aparecer solas.
@@ -86,5 +90,6 @@ Cosas que conviene saber:
 | `app.js` | Interfaz y lógica de la app |
 | `store.js` | Modelo de datos, tareas repetidas y fusión de cambios entre dispositivos |
 | `sync.js` | Sincronización con GitHub Gist |
+| `notes.js` | Editor de notas con formato |
 | `gcal.js` | Conexión con Google Calendar (inicio de sesión, leer, crear, editar y borrar eventos) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Uso sin conexión e instalación como app |

@@ -7,7 +7,7 @@
 //     "2026-11-09": {                       // clave = lunes de la semana
 //       tasks: { [id]: { id, text, done, day (0-6), order, updatedAt, pending?, deleted? } },
 //       goals: { [id]: { id, text, done, order, updatedAt, started?, pending?, deleted? } },
-//       notes: { text, updatedAt }
+//       notes: { text, html?, updatedAt }   // html = nota con formato (limpiada al mostrarla); text = texto plano
 //     }
 //   },
 //   rules: {                                // tareas que se repiten cada semana
@@ -63,6 +63,7 @@ export function normalizeState(raw) {
       }
       if (w.notes && typeof w.notes === 'object') {
         week.notes = { text: String(w.notes.text ?? ''), updatedAt: num(w.notes.updatedAt) };
+        if (typeof w.notes.html === 'string' && w.notes.html) week.notes.html = w.notes.html;
       }
       state.weeks[key] = week;
     }
