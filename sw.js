@@ -2,7 +2,7 @@
 // Estrategia: se responde con la copia guardada y, a la vez, se descarga la
 // versión nueva en segundo plano. Si algo ha cambiado, se avisa a la app
 // para que ofrezca recargar.
-const CACHE = 'planning-semanal-v5';
+const CACHE = 'planning-semanal-v6';
 const ASSETS = [
   './',
   'index.html',
@@ -19,7 +19,7 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS.map((a) => new Request(a, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
