@@ -2,7 +2,7 @@
 // Estrategia: se responde con la copia guardada y, a la vez, se descarga la
 // versión nueva en segundo plano. Si algo ha cambiado, se avisa a la app
 // para que ofrezca recargar.
-const CACHE = 'planning-semanal-v6';
+const CACHE = 'planning-semanal-v7';
 const ASSETS = [
   './',
   'index.html',

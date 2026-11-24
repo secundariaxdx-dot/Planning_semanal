@@ -65,7 +65,7 @@ Cosas que conviene saber:
 
 ## Notas con formato
 
-El apartado **Notas** funciona como las notas de Apple. La barra de arriba tiene: **T** título, **B** negrita, *I* cursiva, ~~S~~ tachado, **•≡** lista, **☑** lista de tareas (pulsa la casilla y el elemento se tacha) y **▸ Desplegable** (una sección que se pliega pulsando su flecha). Atajos al empezar una línea: `- ` crea una lista, `[] ` una lista de tareas y `# ` un título. Las notas antiguas (solo texto) se conservan tal cual.
+El apartado **Notas** funciona como las notas de Apple. La barra de arriba tiene: **T** título, **B** negrita, *I* cursiva, ~~S~~ tachado, **•≡** lista, **☑** lista de tareas (pulsa la casilla y el elemento se tacha) y **▸ Desplegable** (una sección que se pliega pulsando su flecha; la ✕ de su título la elimina). Atajos al empezar una línea: `- ` crea una lista, `[] ` una lista de tareas y `# ` un título. Las notas antiguas (solo texto) se conservan tal cual.
 
 ## Cómo funcionan algunas cosas
 

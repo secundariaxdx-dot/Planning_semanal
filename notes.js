@@ -266,6 +266,18 @@ export class NoteEditor {
   }
 
   keydown(e) {
+    if (e.key === 'Backspace') { // título vacío de un desplegable sin contenido: se elimina entero
+      const head = this.closest('.nt-fold-head');
+      if (head && !head.textContent.trim() && !head.parentElement.querySelector('.nt-fold-body').textContent.trim()) {
+        e.preventDefault();
+        const fold = head.parentElement;
+        const prev = fold.previousElementSibling;
+        fold.remove();
+        if (prev) this.caret(prev, true);
+        this.changed();
+      }
+      return;
+    }
     if (e.key !== 'Enter' || e.shiftKey) return;
     const head = this.closest('.nt-fold-head');
     if (head) { // Intro en el título de un desplegable: pasa al contenido
@@ -295,6 +307,15 @@ export class NoteEditor {
       return;
     }
     const head = e.target.closest('.nt-fold-head');
+    if (head && this.ed.contains(head) && head.getBoundingClientRect().right - x < 30) { // ✕: eliminar el desplegable
+      e.preventDefault();
+      const fold = head.parentElement;
+      const hasContent = fold.querySelector('.nt-fold-body').textContent.trim() !== '';
+      if (hasContent && !confirm('¿Eliminar este desplegable y todo lo que tiene dentro?')) return;
+      fold.remove();
+      this.changed();
+      return;
+    }
     if (head && this.ed.contains(head) && x - head.getBoundingClientRect().left < 26) {
       e.preventDefault();
       const f = head.parentElement;
