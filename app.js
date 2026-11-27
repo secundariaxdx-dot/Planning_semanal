@@ -2,6 +2,8 @@ import { emptyWeek, normalizeState, occId, parseOcc, prune, stamp, uid, weekTask
 import { GistSync } from './sync.js';
 import { GCal } from './gcal.js';
 import { NoteEditor, notesToHtml } from './notes.js';
+import { GDrive } from './gdrive.js';
+import { createStudy } from './study.js';
 
 const STORAGE_KEY = 'planning-semanal:data';
 const THEME_KEY = 'planning-semanal:theme';
@@ -286,6 +288,9 @@ function toast(message, { action = '', onAction = null, duration = 4000, low = f
 
 let pendingRender = false;
 let focusAfterRender = null;
+let study = null; // modo examen (se crea al final, cuando todo lo demás existe)
+const MODE_KEY = 'planning-semanal:mode';
+let studyMode = (() => { try { return localStorage.getItem(MODE_KEY) === 'study'; } catch { return false; } })();
 let addingDay = null; // día con la caja «Añadir tarea» abierta (móvil)
 
 /** Evita redibujar mientras el usuario escribe o tiene un diálogo abierto. */
@@ -350,6 +355,12 @@ function render() {
     const isToday = dateKey === todayKey;
     return dayCard({ name, day, date, list, isToday, isPast: dateKey < todayKey });
   }));
+
+  // Modo examen
+  document.body.classList.toggle('exam-mode', studyMode);
+  $('#studyBtn').setAttribute('aria-pressed', String(studyMode));
+  $('#studyLabel').textContent = studyMode ? 'Volver al planning' : 'Modo examen';
+  if (studyMode && study) study.render();
 
   if (focusAfterRender) {
     const target = document.getElementById(focusAfterRender);
@@ -772,8 +783,8 @@ function goToWeek(key, dir = null) {
     page.classList.add(dir === 'next' ? 'slide-left' : 'slide-right');
   }
 }
-const goPrev = () => goToWeek(shiftWeek(currentKey, -1), 'prev');
-const goNext = () => goToWeek(shiftWeek(currentKey, 1), 'next');
+const goPrev = () => { if (!studyMode) goToWeek(shiftWeek(currentKey, -1), 'prev'); };
+const goNext = () => { if (!studyMode) goToWeek(shiftWeek(currentKey, 1), 'next'); };
 
 $('#prevWeek').addEventListener('click', goPrev);
 $('#nextWeek').addEventListener('click', goNext);
@@ -860,7 +871,11 @@ function refreshEvents(force = false) {
   gcal.loadWeek(currentKey);
 }
 setInterval(() => refreshEvents(false), 60_000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshEvents(false); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  refreshEvents(false);
+  if (studyMode && Date.now() - drive.loadedAt > 60_000) drive.load();
+});
 window.addEventListener('online', () => refreshEvents(true));
 
 const CHIP_TEXT = {
@@ -1181,6 +1196,7 @@ $('#gcalConnect').addEventListener('click', async () => {
 $('#gcalDisconnect').addEventListener('click', () => {
   if (!confirm('¿Desconectar Google Calendar? Tus eventos de Google no se borran; solo dejan de verse aquí.')) return;
   gcal.disconnect();
+  drive.forget();
   render();
   refreshGcalSettings();
 });
@@ -1209,18 +1225,55 @@ window.addEventListener('storage', (e) => {
 let lastDay = keyOf(new Date());
 setInterval(() => {
   const now = keyOf(new Date());
-  if (now !== lastDay) { lastDay = now; requestRender(); }
+  if (now !== lastDay) {
+    lastDay = now;
+    if (studyMode && currentKey !== thisWeekKey()) goToWeek(thisWeekKey()); // el modo examen siempre muestra esta semana
+    requestRender();
+  }
 }, 60_000);
+
+// ---------------------------------------------------------------- modo examen
+
+const drive = new GDrive(gcal, { onChange: () => requestRender() });
+const fmtLongDay = new Intl.DateTimeFormat('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+
+study = createStudy({
+  $, el, plural, keyOf, dateOfKey, addDays, gcal, drive, toast,
+  getState: () => state,
+  commit, uid, stamp,
+  liveExams, daysUntil, openExamDialog, openSettings,
+  itemRow, eventRow, dayTasks, goalsOf, addTask, addGoal, thisWeekKey,
+  fmtLongDay: (d) => fmtLongDay.format(d),
+  focusAfter: (id) => { focusAfterRender = id; },
+  renderIfPending: () => { if (pendingRender) render(); },
+});
+
+function setStudyMode(on) {
+  studyMode = on;
+  try { if (on) localStorage.setItem(MODE_KEY, 'study'); else localStorage.removeItem(MODE_KEY); } catch { /* ignorar */ }
+  if (on) {
+    flushNotes();
+    if (currentKey !== thisWeekKey()) goToWeek(thisWeekKey());
+    drive.load();
+    refreshEvents(true);
+  }
+  render();
+  window.scrollTo({ top: 0 });
+}
+$('#studyBtn').addEventListener('click', () => setStudyMode(!studyMode));
 
 // ---------------------------------------------------------------- arranque
 
 // Al abrir, empezar siempre por los objetivos (sin recuperar el scroll anterior).
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 applyTheme(savedTheme());
+if (studyMode) currentKey = thisWeekKey();
 render();
 scrollToGoals(false);
 sync.start();
 refreshEvents(true);
+study.refreshTimer();
+if (studyMode) drive.load();
 
 // Service worker: abre al instante con la copia guardada y avisa si hay versión nueva.
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

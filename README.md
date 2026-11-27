@@ -63,6 +63,29 @@ Cosas que conviene saber:
 - **Desconectar** (Ajustes → Desconectar Google) revoca el permiso y borra la copia local; tus eventos de Google no se tocan.
 - Solo se usa el calendario principal.
 
+## Modo examen
+
+El botón **🎓 Modo examen** (arriba) cambia la pantalla a un panel de estudio. Otro clic vuelve al planning.
+
+- **Calendario** de las próximas 6 semanas con los días de examen en el color de su asignatura. Pulsa un día libre para añadir un examen esa fecha.
+- **Exámenes** con su cuenta atrás (rojo si quedan menos de 2 semanas).
+- **Temporizador** de estudio (25 min + 5 de descanso, o 50 + 10). Cuenta las sesiones del día.
+- **Asignaturas**: crea una por examen (o pulsa «Crear asignaturas» y se crean solas a partir de tus exámenes). Añade sus temas uno a uno o **pega la lista entera** del temario. Cada tema tiene tres estados (pulsa el círculo): pendiente ○ → estudiado ◐ → repasado ●. La tarjeta muestra el porcentaje y el ritmo que necesitas para llegar («Para llegar: 1,5 al día» = estudiar o repasar 1,5 temas al día).
+- **Plan de hoy**: la app sugiere qué estudiar hoy según lo que te queda y lo cerca que está cada examen. El ✓ marca el tema como estudiado o repasado.
+- **Hoy** y **Objetivos de la semana**: los mismos de tu planning, para no tener que cambiar de pantalla.
+
+### Apuntes en Google Drive
+
+Cada asignatura puede guardar sus apuntes (PDF, fotos, documentos…). Se suben a **tu Google Drive**, a la carpeta «Planning semanal · Apuntes», con una subcarpeta por asignatura, así que están en todos tus dispositivos y también se ven desde Drive. Puedes arrastrar varios archivos a la vez encima de la tarjeta de la asignatura. Borrar un apunte lo manda a la papelera de Drive (recuperable 30 días).
+
+Para activarlo (una vez), además de lo del calendario:
+
+1. En Google Cloud, activa la **API de Google Drive**: <https://console.cloud.google.com/apis/library/drive.googleapis.com>.
+2. En *Google Auth Platform → Acceso a los datos*, añade el permiso `.../auth/drive.file`.
+3. En la app, pulsa **Activar apuntes en Drive** en cualquier asignatura y acepta el permiso de Drive.
+
+El permiso `drive.file` solo deja a la app ver los archivos que ella misma sube; no puede ver ni tocar el resto de tu Drive. Los archivos que metas a mano en esa carpeta desde Drive no aparecerán en la app: súbelos desde la app.
+
 ## Notas con formato
 
 El apartado **Notas** funciona como las notas de Apple. La barra de arriba tiene: **T** título, **B** negrita, *I* cursiva, ~~S~~ tachado, **•≡** lista, **☑** lista de tareas (pulsa la casilla y el elemento se tacha) y **▸ Desplegable** (una sección que se pliega pulsando su flecha; la ✕ de su título la elimina). Atajos al empezar una línea: `- ` crea una lista, `[] ` una lista de tareas y `# ` un título. Las notas antiguas (solo texto) se conservan tal cual.
@@ -91,5 +114,7 @@ El apartado **Notas** funciona como las notas de Apple. La barra de arriba tiene
 | `store.js` | Modelo de datos, tareas repetidas y fusión de cambios entre dispositivos |
 | `sync.js` | Sincronización con GitHub Gist |
 | `notes.js` | Editor de notas con formato |
+| `study.js` | Modo examen |
+| `gdrive.js` | Apuntes en Google Drive |
 | `gcal.js` | Conexión con Google Calendar (inicio de sesión, leer, crear, editar y borrar eventos) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Uso sin conexión e instalación como app |

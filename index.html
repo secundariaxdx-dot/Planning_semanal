@@ -34,6 +34,9 @@
         </p>
         <p class="progress-text" id="progressText"></p>
       </div>
+      <button type="button" class="pill-btn study-btn" id="studyBtn" aria-pressed="false" title="Modo examen: asignaturas, temas, apuntes y plan de estudio">
+        <span aria-hidden="true">🎓</span><span class="study-label" id="studyLabel">Modo examen</span>
+      </button>
       <nav class="week-nav" aria-label="Cambiar de semana">
         <button class="icon-btn" id="prevWeek" aria-label="Semana anterior" title="Semana anterior">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
@@ -110,6 +113,10 @@
       <div class="exams-list" id="exams"></div>
     </aside>
   </main>
+
+  <!-- Modo examen (lo dibuja study.js) -->
+  <main class="study" id="study" aria-label="Modo examen"></main>
+  <input type="file" id="driveFileInput" multiple hidden>
 
   <!-- Aviso breve (deshacer, estado de la sincronización…) -->
   <div class="toast" id="toast" role="status" aria-live="polite" hidden>
@@ -191,6 +198,53 @@
     </form>
   </dialog>
 
+  <!-- Asignatura (modo examen) -->
+  <dialog id="subjectDialog" class="sheet">
+    <form method="dialog" id="subjectForm">
+      <h2 id="subjectDialogTitle">Nueva asignatura</h2>
+      <label class="field">
+        <span>Nombre</span>
+        <input id="subjectName" required autocomplete="off" placeholder="Macroeconomía">
+      </label>
+      <div class="option-group">
+        <span class="field-label">Color</span>
+        <div class="swatches" id="subjectColors"></div>
+      </div>
+      <label class="field">
+        <span>Examen</span>
+        <select id="subjectExam"></select>
+      </label>
+      <p class="option-hint">¿No sale tu examen? Añádelo antes con el + de «Exámenes».</p>
+      <div class="dialog-actions">
+        <button value="delete" class="btn danger" id="subjectDelete" formnovalidate>Eliminar</button>
+        <span class="spacer"></span>
+        <button value="cancel" class="btn" formnovalidate>Cancelar</button>
+        <button value="save" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Tema de una asignatura -->
+  <dialog id="topicDialog" class="sheet">
+    <form method="dialog" id="topicForm">
+      <h2>Editar tema</h2>
+      <label class="field">
+        <span>Tema</span>
+        <textarea id="topicText" rows="2" required></textarea>
+      </label>
+      <div class="option-group">
+        <span class="field-label">Cómo lo llevo</span>
+        <div class="segmented" id="topicStatus" role="group" aria-label="Estado del tema"></div>
+      </div>
+      <div class="dialog-actions">
+        <button value="delete" class="btn danger" formnovalidate>Eliminar</button>
+        <span class="spacer"></span>
+        <button value="cancel" class="btn" formnovalidate>Cancelar</button>
+        <button value="save" class="btn primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Ajustes: apariencia y sincronización -->
   <dialog id="settingsDialog" class="sheet">
     <form method="dialog" id="settingsForm">
@@ -212,8 +266,8 @@
           <summary>Cómo conseguir el Client ID (5 pasos)</summary>
           <ol class="steps">
             <li>Entra en <a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Google Cloud</a> y crea un proyecto llamado «Planning semanal».</li>
-            <li>Activa la <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">API de Google Calendar</a> (botón «Habilitar»).</li>
-            <li>En <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener">Google Auth Platform</a> pulsa «Comenzar»: nombre de la app «Planning semanal», tu correo, público «Externo». Luego, en «Público», añade tu correo de Google como <em>usuario de prueba</em>, y en «Acceso a los datos» añade el permiso <code>.../auth/calendar.events</code>.</li>
+            <li>Activa la <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noopener">API de Google Calendar</a> y, para los apuntes, la <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com" target="_blank" rel="noopener">API de Google Drive</a> (botón «Habilitar» en cada una).</li>
+            <li>En <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noopener">Google Auth Platform</a> pulsa «Comenzar»: nombre de la app «Planning semanal», tu correo, público «Externo». Luego, en «Público», añade tu correo de Google como <em>usuario de prueba</em>, y en «Acceso a los datos» añade los permisos <code>.../auth/calendar.events</code> y <code>.../auth/drive.file</code>.</li>
             <li>En <a href="https://console.cloud.google.com/auth/clients/create" target="_blank" rel="noopener">Clientes → Crear cliente</a> elige «Aplicación web» y, en «Orígenes de JavaScript autorizados», escribe exactamente <code id="gcalOrigin"></code> (sin barra final).</li>
             <li>Copia el «ID de cliente» (termina en <code>.apps.googleusercontent.com</code>) y pégalo aquí debajo.</li>
           </ol>

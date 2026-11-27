@@ -13,6 +13,12 @@
 //   rules: {                                // tareas que se repiten cada semana
 //     [id]: { id, text, days: [0-6…], from, until, order, updatedAt, deleted? }
 //   },
+//   subjects: {                             // asignaturas del modo examen
+//     [id]: { id, name, color, examId, order, updatedAt, deleted? }
+//   },
+//   topics: {                               // temas de cada asignatura; status 0 pendiente · 1 estudiado · 2 repasado
+//     [id]: { id, subjectId, text, status, order, updatedAt, deleted? }
+//   },
 //   exams: {                                // exámenes finales (no dependen de la semana)
 //     [id]: { id, text, date: "AAAA-MM-DD", updatedAt, deleted? }
 //   }
@@ -30,7 +36,7 @@
 const WEEK_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const PRUNE_AFTER_MS = 60 * 24 * 60 * 60 * 1000; // 60 días
 
-export const emptyState = () => ({ version: 4, weeks: {}, rules: {}, exams: {} });
+export const emptyState = () => ({ version: 5, weeks: {}, rules: {}, exams: {}, subjects: {}, topics: {} });
 export const emptyWeek = () => ({ tasks: {}, goals: {}, notes: { text: '', updatedAt: 0 } });
 
 const num = (v, fallback = 0) => (Number.isFinite(v) ? v : fallback);
@@ -97,6 +103,37 @@ export function normalizeState(raw) {
       state.exams[id] = exam;
     }
   }
+  if (raw.subjects && typeof raw.subjects === 'object') {
+    for (const [id, x] of Object.entries(raw.subjects)) {
+      if (!x || typeof x !== 'object') continue;
+      const subject = {
+        id,
+        name: String(x.name ?? ''),
+        color: /^#[0-9a-f]{6}$/i.test(x.color) ? x.color : '#2f6fdf',
+        examId: typeof x.examId === 'string' && x.examId ? x.examId : null,
+        order: num(x.order),
+        updatedAt: num(x.updatedAt),
+      };
+      if (x.deleted) subject.deleted = true;
+      state.subjects[id] = subject;
+    }
+  }
+
+  if (raw.topics && typeof raw.topics === 'object') {
+    for (const [id, x] of Object.entries(raw.topics)) {
+      if (!x || typeof x !== 'object' || typeof x.subjectId !== 'string') continue;
+      const topic = {
+        id,
+        subjectId: x.subjectId,
+        text: String(x.text ?? ''),
+        status: Math.min(2, Math.max(0, Math.trunc(Number(x.status) || 0))),
+        order: num(x.order),
+        updatedAt: num(x.updatedAt),
+      };
+      if (x.deleted) topic.deleted = true;
+      state.topics[id] = topic;
+    }
+  }
   return state;
 }
 
@@ -144,6 +181,8 @@ export function merge(local, remote) {
 
   mergeMap(local.rules, remote.rules, merged.rules);
   mergeMap(local.exams, remote.exams, merged.exams);
+  mergeMap(local.subjects, remote.subjects, merged.subjects);
+  mergeMap(local.topics, remote.topics, merged.topics);
   return { merged, ...flags };
 }
 
@@ -165,8 +204,10 @@ export function prune(state, now = Date.now()) {
       && w.notes.text === '' && w.notes.updatedAt < cutoff;
     if (empty) delete state.weeks[key];
   }
-  for (const [id, x] of Object.entries(state.exams)) {
-    if (x.deleted && x.updatedAt < cutoff) delete state.exams[id];
+  for (const kind of ['exams', 'subjects', 'topics']) {
+    for (const [id, x] of Object.entries(state[kind])) {
+      if (x.deleted && x.updatedAt < cutoff) delete state[kind][id];
+    }
   }
   return state;
 }

@@ -2,7 +2,7 @@
 // Estrategia: se responde con la copia guardada y, a la vez, se descarga la
 // versión nueva en segundo plano. Si algo ha cambiado, se avisa a la app
 // para que ofrezca recargar.
-const CACHE = 'planning-semanal-v7';
+const CACHE = 'planning-semanal-v8';
 const ASSETS = [
   './',
   'index.html',
@@ -12,6 +12,8 @@ const ASSETS = [
   'sync.js',
   'gcal.js',
   'notes.js',
+  'gdrive.js',
+  'study.js',
   'manifest.webmanifest',
   'icons/icon.svg',
   'icons/icon-192.png',

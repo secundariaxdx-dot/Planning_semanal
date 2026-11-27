@@ -11,6 +11,8 @@ const KEY = 'planning-semanal:gcal';
 const CACHE_KEY = 'planning-semanal:gcal-events';
 const API = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+// Solo los archivos que crea la propia app (no da acceso al resto de tu Drive).
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 const CLIENT_ID_RE = /^[\w-]+(\.[\w-]+)*\.apps\.googleusercontent\.com$/;
 const MAX_CACHED_WEEKS = 8;
@@ -142,6 +144,8 @@ export class GCal {
     this.token = typeof s.token === 'string' ? s.token : '';
     this.expiresAt = Number(s.expiresAt) || 0;
     this.connected = !!s.connected && !!this.clientId;
+    this.wantDrive = !!s.wantDrive; // el usuario activó los apuntes en Drive
+    this.driveOk = !!s.driveOk;     // y Google concedió el permiso
     this.state = this.connected ? (this.#tokenOk() ? 'ok' : 'reauth') : 'off';
     this.weeks = new Map(); // lunes (AAAA-MM-DD) → { at, events: Map id → evento }
     this.lastDetail = '';
@@ -162,6 +166,7 @@ export class GCal {
   #save() {
     writeJson(KEY, {
       clientId: this.clientId, token: this.token, expiresAt: this.expiresAt, connected: this.connected,
+      wantDrive: this.wantDrive, driveOk: this.driveOk,
     });
   }
 
@@ -189,7 +194,7 @@ export class GCal {
       const done = (fn, v) => { clearTimeout(timer); fn(v); };
       const client = google.accounts.oauth2.initTokenClient({
         client_id: this.clientId,
-        scope: SCOPE,
+        scope: this.wantDrive ? `${SCOPE} ${DRIVE_SCOPE}` : SCOPE,
         callback: (r) => {
           if (r.error) return done(reject, new GCalError('auth', 'No se pudo conectar con Google (' + r.error + ').'));
           if (!google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE)) {
@@ -211,6 +216,7 @@ export class GCal {
     if (gen !== this.gen) throw new GCalError('auth', 'Se desconectó mientras tanto.');
     this.token = r.access_token;
     this.expiresAt = Date.now() + (Number(r.expires_in) || 3600) * 1000;
+    this.driveOk = this.wantDrive && google.accounts.oauth2.hasGrantedAllScopes(r, DRIVE_SCOPE);
     this.#save();
   }
 
@@ -230,6 +236,7 @@ export class GCal {
     this.token = '';
     this.expiresAt = 0;
     this.connected = false;
+    this.driveOk = false;
     this.weeks.clear();
     try { localStorage.removeItem(CACHE_KEY); } catch { /* ignorar */ }
     this.state = this.clientId ? 'idle' : 'off';
@@ -251,7 +258,7 @@ export class GCal {
   // ---------- peticiones
 
   /** `interactive`: viene de una acción del usuario, así que puede abrir la ventana de Google. */
-  async #request(url, init = {}, interactive = false, retry = true) {
+  async #request(url, init = {}, interactive = false, retry = true, quiet = false) {
     if (!this.connected) throw new GCalError('auth', 'Google Calendar no está conectado.');
     if (!this.#tokenOk()) {
       if (!interactive) {
@@ -280,12 +287,46 @@ export class GCal {
     if (res.ok) { this.#setState('ok'); return res; }
     if (res.status === 401 && retry) {
       this.token = ''; this.expiresAt = 0; this.#save();
-      return this.#request(url, init, interactive, false);
+      return this.#request(url, init, interactive, false, quiet);
     }
     const err = await failFrom(res);
     if (err.kind === 'auth') this.#setState('reauth', err.message);
-    else if (err.kind === 'setup' || err.kind === 'perm') this.#setState('error', err.message);
+    else if (!quiet && (err.kind === 'setup' || err.kind === 'perm')) this.#setState('error', err.message);
     throw err;
+  }
+
+  // ---------- acceso para otros servicios de Google (Drive)
+
+  /** Petición autenticada a otra API de Google. Sus errores de permisos no afectan al estado del calendario. */
+  api(url, init = {}, { interactive = false } = {}) {
+    return this.#request(url, init, interactive, true, true);
+  }
+
+  /** Token válido (para subidas con barra de progreso). */
+  async accessToken({ interactive = false } = {}) {
+    if (!this.connected) throw new GCalError('auth', 'Google no está conectado.');
+    if (!this.#tokenOk()) {
+      if (!interactive) throw new GCalError('auth', 'La sesión de Google ha caducado. Pulsa «Reconectar».');
+      await this.#acquire('', this.gen);
+      this.#setState('ok');
+    }
+    return this.token;
+  }
+
+  /** Pide también el permiso de Drive (abre la ventana de Google: llamar desde un clic). */
+  async enableDrive() {
+    if (!this.connected) throw new GCalError('auth', 'Primero conecta Google en Ajustes.');
+    this.wantDrive = true;
+    this.#save();
+    try {
+      await this.#acquire('consent', this.gen);
+    } catch (e) {
+      this.wantDrive = false; // no estropear la conexión del calendario si Drive falla
+      this.#save();
+      throw e;
+    }
+    this.#setState('ok');
+    if (!this.driveOk) throw new GCalError('perm', 'No se concedió el permiso de Google Drive. Vuelve a intentarlo marcando la casilla de Drive.');
   }
 
   // ---------- lectura
