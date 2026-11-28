@@ -844,6 +844,14 @@ body:not(.exam-mode) .study { display: none; }
 }
 .swatch[aria-pressed="true"] { border-color: var(--text); }
 
+/* Pantallas grandes: la página no se desplaza; cada columna tiene su propio scroll.
+   (Va al final para que ninguna regla anterior lo anule.) */
+@media (min-width: 1180px) and (min-height: 640px) {
+  .study { align-items: stretch; }
+  .study-col { align-self: stretch; height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .study .topics { max-height: none; overflow: visible; }
+}
+
 /* ---------- Aviso (toast) ---------- */
 .toast {
   position: fixed;
